@@ -1,0 +1,8 @@
+# Tüm metin dosyalarında satır sonlarını normalize et (LF).
+# GitHub Actions Ubuntu'da çalıştığı için shell script'ler LF olmalı.
+* text=auto eol=lf
+
+# Binary dosyalar dokunulmasın
+*.png binary
+*.jpg binary
+*.ico binary

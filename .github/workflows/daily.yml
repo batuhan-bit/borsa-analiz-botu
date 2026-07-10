@@ -1,0 +1,49 @@
+name: Günlük Borsa Analizi
+
+on:
+  schedule:
+    # 22:00 UTC, hafta içi (Pzt-Cum). ABD piyasası kapanışından sonra
+    # (16:00 ET = 20:00/21:00 UTC — DST'ye göre; 22:00 güvenli marj).
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch: {}   # elle tetikleme (test için)
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Repo'yu checkout et
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Bağımlılıkları yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Google service account dosyasını yaz
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICE_ACCOUNT_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON" > service_account.json
+            echo "service_account.json yazıldı."
+          else
+            echo "GOOGLE_SERVICE_ACCOUNT_JSON boş — atlanıyor."
+          fi
+
+      - name: Botu çalıştır
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_FILE: service_account.json
+        run: python -m bot.main

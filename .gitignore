@@ -1,0 +1,29 @@
+# --- Sırlar / kimlik bilgileri (ASLA commit edilmez) ---
+.env
+*.env
+service_account.json
+google_credentials.json
+secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# --- Veri / cache / çıktı ---
+data_cache/
+*.csv
+!tests/**/*.csv
+backtest/results/
+*.log
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

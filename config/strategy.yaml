@@ -1,0 +1,79 @@
+# =========================================================
+#  Strateji Konfigürasyonu
+#  Tüm strateji parametreleri burada tek yerde tutulur.
+#  Kod değiştirmeden ayar yapabilmek için buradan okunur.
+# =========================================================
+
+portfolio:
+  budget_min: 1000          # USD
+  budget_max: 5000          # USD
+  horizon_months: 3
+  target_return_pct: 15     # 3 aylık hedef portföy getirisi
+  total_positions: 6        # her sepette 2 pozisyon
+  positions_per_basket: 2
+  execution: manual         # bot sadece sinyal üretir, alım-satımı kullanıcı yapar
+
+# --- Sepet dağılımı (toplam bütçenin yüzdesi) ---
+baskets:
+  low_volatility:
+    allocation_pct: 40
+    description: "S&P 500 geneli, düşük beta hisseler/ETF'ler"
+    max_beta: 1.0
+    # İzlenecek başlangıç evreni (sinyal motoru bunları tarar)
+    universe: [SPY, XLP, XLU, JNJ, PG, KO, PEP, COST, WMT, MCD]
+
+  high_volatility:
+    allocation_pct: 35
+    description: "Yarı iletken/AI donanım, biyoteknoloji, kripto-korele hisseler"
+    universe: [NVDA, AMD, SMCI, TSM, AVGO, MRNA, BIIB, COIN, MSTR, MARA]
+
+  under_radar:
+    allocation_pct: 25
+    description: "500M-5B piyasa değeri, son 3 ayda anormal hacim artışı, sınırlı medya kapsamı"
+    market_cap_min: 500_000_000
+    market_cap_max: 5_000_000_000
+    abnormal_volume_lookback_days: 63     # ~3 ay işlem günü
+    abnormal_volume_multiplier: 2.0       # ortalama hacmin 2 katı
+    # Radar altı sepeti için evren dinamik taranır; başlangıç izleme listesi:
+    universe: [IONQ, RKLB, ASTS, OKLO, TDW, CELH, HIMS, POWL, APP, ANF]
+
+# --- Teknik göstergeler ---
+technical:
+  rsi:
+    period: 14
+    overbought: 70
+    oversold: 30
+  macd:
+    fast: 12
+    slow: 26
+    signal: 9
+  moving_averages:
+    short: 50
+    long: 200        # 50/200 altın çaprazı & ölüm çaprazı
+  volume_confirmation:
+    lookback_days: 20
+    min_multiplier: 1.5   # sinyal teyidi için hacim ortalamanın 1.5 katı
+
+# --- Temel analiz ---
+fundamental:
+  use_news: true
+  use_earnings: true
+  use_analyst_ratings: true
+  # Alpha Vantage / web sinyallerine verilecek göreli ağırlık
+  weight: 0.35            # teknik ağırlık = 1 - weight
+
+# --- Risk yönetimi ---
+risk:
+  position_stop_loss_pct: 20    # tek pozisyon %20 kaybederse acil satış bildirimi
+  portfolio_stop_loss_pct: null # portföy seviyesinde durdurma YOK
+
+# --- Bildirim ---
+notification:
+  channel: slack
+  frequency: daily
+  send_after_market_close: true
+
+# --- Backtesting ---
+backtest:
+  lookback_years: 3
+  initial_capital: 3000
