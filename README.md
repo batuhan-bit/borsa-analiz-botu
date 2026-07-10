@@ -68,6 +68,22 @@ pytest                          # testler
 GitHub Actions [`daily.yml`](.github/workflows/daily.yml) her hafta içi
 22:00 UTC'de otomatik çalıştırır (elle tetikleme: `workflow_dispatch`).
 
+## Google Sheet Yapısı
+
+Bot, Sheet ID ile verilen dokümanda üç sekme kullanır (yoksa otomatik oluşturur):
+
+| Sekme | Kim yazar | İçerik |
+|---|---|---|
+| **Sinyaller** | Bot | Üretilen her sinyal (zaman, sembol, sepet, sinyal, skor, fiyat, gerekçe) |
+| **Pozisyonlar** | **Siz** | Açık pozisyonlarınız — stop-loss buradan hesaplanır |
+| **Performans** | Bot | Günlük portföy değeri + sinyal sayaçları |
+
+**Pozisyonlar** sekmesi sütunları: `Sembol · Sepet · Giriş Tarihi · Giriş Fiyatı · Adet · Durum`.
+Manuel bir alım yaptığınızda buraya bir satır ekleyin; `Durum` `KAPALI` olmadıkça
+pozisyon açık kabul edilir ve %20 stop-loss kontrolüne girer.
+
+> Service account e-postasına Sheet'te **düzenleyici** erişimi vermeyi unutmayın.
+
 ## Geliştirme Durumu
 
 - [x] 1. Repo iskeleti + requirements.txt
@@ -75,6 +91,6 @@ GitHub Actions [`daily.yml`](.github/workflows/daily.yml) her hafta içi
 - [x] 3. Sinyal motoru (teknik + temel) + pozisyon bazlı stop-loss
 - [x] 4. Backtesting scripti (3 yıl, yalnızca teknik)
 - [x] 5. Slack bildirim modülü
-- [ ] 6. Google Sheets loglama
+- [x] 6. Google Sheets loglama
 - [ ] 7. GitHub Actions workflow (iskelet hazır)
 - [ ] 8. Uçtan uca test

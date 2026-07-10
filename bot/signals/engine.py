@@ -47,6 +47,13 @@ class SignalEngine:
             df = self._yf.get_daily_bars(symbol, years=years)
         return df
 
+    def latest_price(self, symbol: str) -> Optional[float]:
+        """Sembolün son kapanış fiyatı (stop-loss / performans için)."""
+        df = self._get_bars(symbol, years=0.2)
+        if df.empty:
+            return None
+        return float(df["close"].iloc[-1])
+
     def _get_fundamental_data(self, symbol: str, price: Optional[float]) -> dict[str, Any]:
         """Alpha Vantage'dan temel veriyi çek ve normalize et (anahtar yoksa {})."""
         if self._av is None:
