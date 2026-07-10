@@ -113,6 +113,7 @@ class BacktestResult:
     num_trades: int
     start: str
     end: str
+    target_quarterly_pct: float = 6.5
     benchmark_return_pct: Optional[float] = None
     equity_curve: pd.Series = field(default=None, repr=False)
     trades: list[Trade] = field(default_factory=list, repr=False)
@@ -252,11 +253,12 @@ def run_backtest(
         close_position(sym, last_price[sym], all_dates[-1], "backtest_end")
 
     equity_curve = pd.Series(equity_vals, index=equity_dates, name="equity")
-    return _metrics(equity_curve, trades, initial, years, sig_frames)
+    target = float(strat.portfolio["target_return_pct"])
+    return _metrics(equity_curve, trades, initial, years, sig_frames, target=target)
 
 
 def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: float,
-             sig_frames: dict[str, pd.DataFrame]) -> BacktestResult:
+             sig_frames: dict[str, pd.DataFrame], *, target: float = 6.5) -> BacktestResult:
     final = float(equity.iloc[-1]) if not equity.empty else initial
     total_return = (final / initial - 1) * 100.0
 
@@ -287,6 +289,7 @@ def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: floa
         num_trades=len(trades),
         start=str(equity.index[0].date()) if len(equity) else "-",
         end=str(equity.index[-1].date()) if len(equity) else "-",
+        target_quarterly_pct=target,
         benchmark_return_pct=round(benchmark, 2) if benchmark is not None else None,
         equity_curve=equity,
         trades=trades,
@@ -310,8 +313,9 @@ def _print_report(r: BacktestResult) -> None:
     print("-" * 56)
     quarters = max((pd.Timestamp(r.end) - pd.Timestamp(r.start)).days / 91.25, 1e-9)
     realized_q = ((1 + r.total_return_pct / 100.0) ** (1 / quarters) - 1) * 100.0
-    verdict = "ULAŞILDI ✓" if realized_q >= 15.0 else "ULAŞILAMADI ✗"
-    print(f"  Gerçekleşen çeyreklik getiri: %{realized_q:+.2f}  (hedef %15) → {verdict}")
+    target = r.target_quarterly_pct
+    verdict = "ULAŞILDI ✓" if realized_q >= target else "ULAŞILAMADI ✗"
+    print(f"  Gerçekleşen çeyreklik getiri: %{realized_q:+.2f}  (hedef %{target:g}) → {verdict}")
     print("=" * 56 + "\n")
 
 

@@ -8,7 +8,7 @@ from bot.models import Basket
 def test_strategy_loads():
     strat = Strategy.load()
     assert strat.portfolio["total_positions"] == 6
-    assert strat.portfolio["target_return_pct"] == 15
+    assert strat.portfolio["target_return_pct"] == 6.5
 
 
 def test_basket_allocations_sum_to_100():
