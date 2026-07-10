@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 
 from .config import Settings
+from .notify import SlackNotifier
 from .signals import SignalEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -42,9 +43,11 @@ def main() -> None:
 
     # TODO(adım 6): stop-loss kontrolü — açık pozisyonları Sheets'ten oku
     # TODO(adım 6): SheetsLogger(settings.secrets).log_signals(signals)
-    # TODO(adım 5): SlackNotifier(settings.secrets.slack_webhook_url).send(signals)
 
     _print_summary(signals)
+
+    # Slack bildirimi (webhook yoksa güvenle atlanır)
+    SlackNotifier(settings.secrets.slack_webhook_url).send(signals)
 
 
 if __name__ == "__main__":

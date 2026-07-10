@@ -74,7 +74,7 @@ GitHub Actions [`daily.yml`](.github/workflows/daily.yml) her hafta içi
 - [x] 2. Veri çekme modülleri (Alpaca, yfinance, Alpha Vantage)
 - [x] 3. Sinyal motoru (teknik + temel) + pozisyon bazlı stop-loss
 - [x] 4. Backtesting scripti (3 yıl, yalnızca teknik)
-- [ ] 5. Slack bildirim modülü
+- [x] 5. Slack bildirim modülü
 - [ ] 6. Google Sheets loglama
 - [ ] 7. GitHub Actions workflow (iskelet hazır)
 - [ ] 8. Uçtan uca test
