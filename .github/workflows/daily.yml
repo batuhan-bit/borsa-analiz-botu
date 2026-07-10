@@ -7,6 +7,15 @@ on:
     - cron: "0 22 * * 1-5"
   workflow_dispatch: {}   # elle tetikleme (test için)
 
+# Yalnızca repo içeriğini okuması yeterli (least-privilege).
+permissions:
+  contents: read
+
+# Aynı anda birden fazla çalıştırma birikmesin.
+concurrency:
+  group: daily-analysis
+  cancel-in-progress: false
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -42,8 +51,10 @@ jobs:
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ALPACA_DATA_URL: ${{ secrets.ALPACA_DATA_URL }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_SERVICE_ACCOUNT_FILE: service_account.json
+          PYTHONUTF8: "1"
         run: python -m bot.main

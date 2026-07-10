@@ -92,5 +92,5 @@ pozisyon açık kabul edilir ve %20 stop-loss kontrolüne girer.
 - [x] 4. Backtesting scripti (3 yıl, yalnızca teknik)
 - [x] 5. Slack bildirim modülü
 - [x] 6. Google Sheets loglama
-- [ ] 7. GitHub Actions workflow (iskelet hazır)
+- [x] 7. GitHub Actions workflow (günlük çalıştırma + CI testleri)
 - [ ] 8. Uçtan uca test
