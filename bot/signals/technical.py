@@ -8,21 +8,22 @@ Skor konvansiyonu: pozitif = boğa/alış eğilimi, negatif = ayı/satış eğil
 """
 from __future__ import annotations
 
-from typing import Any
+import math
+from typing import Any, Optional
 
 import pandas as pd
 
-from .util import clip, last_valid, tail2
+from .util import clip
 
 
-def compute_indicators(df: pd.DataFrame, cfg: dict[str, Any]) -> dict[str, Any]:
-    """OHLCV DataFrame'inden ham gösterge değerlerini hesapla.
+def indicator_frame(df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
+    """Tüm geçmiş için gösterge SERİLERİNİ tek DataFrame olarak hesapla.
 
-    Kesişim tespiti için MACD/MA'ların hem son hem önceki değerleri döner.
-    Yetersiz veri varsa ilgili alanlar None olur.
+    Kolonlar: close, rsi, macd, macd_signal, ma_short, ma_long, volume_ratio.
+    Hem canlı motor (son satır) hem backtest (her gün) aynı kaynağı kullanır.
     """
-    if df is None or df.empty or len(df) < 2:
-        return {}
+    if df is None or df.empty:
+        return pd.DataFrame()
 
     from ta.momentum import RSIIndicator
     from ta.trend import MACD
@@ -30,47 +31,77 @@ def compute_indicators(df: pd.DataFrame, cfg: dict[str, Any]) -> dict[str, Any]:
     close = df["close"].astype(float)
     volume = df["volume"].astype(float)
 
-    rsi_cfg = cfg["rsi"]
     macd_cfg = cfg["macd"]
     ma_cfg = cfg["moving_averages"]
-    vol_cfg = cfg["volume_confirmation"]
 
-    rsi = RSIIndicator(close, window=rsi_cfg["period"]).rsi()
     macd = MACD(
         close,
         window_slow=macd_cfg["slow"],
         window_fast=macd_cfg["fast"],
         window_sign=macd_cfg["signal"],
     )
-    macd_line = macd.macd()
-    macd_sig = macd.macd_signal()
-    ma_short = close.rolling(ma_cfg["short"]).mean()
-    ma_long = close.rolling(ma_cfg["long"]).mean()
-    vol_avg = volume.rolling(vol_cfg["lookback_days"]).mean()
+    vol_avg = volume.rolling(cfg["volume_confirmation"]["lookback_days"]).mean()
 
-    macd_prev, macd_now = tail2(macd_line)
-    sig_prev, sig_now = tail2(macd_sig)
-    mas_prev, mas_now = tail2(ma_short)
-    mal_prev, mal_now = tail2(ma_long)
+    frame = pd.DataFrame(index=df.index)
+    frame["close"] = close
+    frame["rsi"] = RSIIndicator(close, window=cfg["rsi"]["period"]).rsi()
+    frame["macd"] = macd.macd()
+    frame["macd_signal"] = macd.macd_signal()
+    frame["ma_short"] = close.rolling(ma_cfg["short"]).mean()
+    frame["ma_long"] = close.rolling(ma_cfg["long"]).mean()
+    frame["volume_ratio"] = volume / vol_avg
+    return frame
 
-    last_vol = last_valid(volume)
-    avg_vol = last_valid(vol_avg)
-    volume_ratio = (last_vol / avg_vol) if (last_vol and avg_vol) else None
+
+def _nn(value: Any) -> Optional[float]:
+    """NaN/None -> None; aksi halde float."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(f) else f
+
+
+def indicators_from_rows(now: Any, prev: Any, *, n_bars: Optional[int] = None) -> dict[str, Any]:
+    """Gösterge çerçevesinin bir (şimdiki, önceki) satır çiftini skor sözlüğüne çevir.
+
+    now/prev pandas Series veya None olabilir. Kesişim tespiti prev'e dayanır.
+    """
+    def g(row: Any, key: str) -> Optional[float]:
+        if row is None:
+            return None
+        return _nn(row.get(key))
 
     return {
-        "close": last_valid(close),
-        "rsi": last_valid(rsi),
-        "macd": macd_now,
-        "macd_prev": macd_prev,
-        "macd_signal": sig_now,
-        "macd_signal_prev": sig_prev,
-        "ma_short": mas_now,
-        "ma_short_prev": mas_prev,
-        "ma_long": mal_now,
-        "ma_long_prev": mal_prev,
-        "volume_ratio": volume_ratio,
-        "n_bars": len(df),
+        "close": g(now, "close"),
+        "rsi": g(now, "rsi"),
+        "macd": g(now, "macd"),
+        "macd_prev": g(prev, "macd"),
+        "macd_signal": g(now, "macd_signal"),
+        "macd_signal_prev": g(prev, "macd_signal"),
+        "ma_short": g(now, "ma_short"),
+        "ma_short_prev": g(prev, "ma_short"),
+        "ma_long": g(now, "ma_long"),
+        "ma_long_prev": g(prev, "ma_long"),
+        "volume_ratio": g(now, "volume_ratio"),
+        "n_bars": n_bars,
     }
+
+
+def compute_indicators(df: pd.DataFrame, cfg: dict[str, Any]) -> dict[str, Any]:
+    """OHLCV DataFrame'inin SON gününe ait gösterge değerlerini döndür.
+
+    Kesişim tespiti için MACD/MA'ların hem son hem önceki değerleri döner.
+    Yetersiz veri varsa ilgili alanlar None olur.
+    """
+    frame = indicator_frame(df, cfg)
+    if frame.empty:
+        return {}
+    now = frame.iloc[-1]
+    prev = frame.iloc[-2] if len(frame) >= 2 else None
+    return indicators_from_rows(now, prev, n_bars=len(df))
 
 
 def technical_score(indicators: dict[str, Any], cfg: dict[str, Any]) -> tuple[float, list[str]]:

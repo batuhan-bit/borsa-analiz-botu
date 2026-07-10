@@ -1,26 +1,345 @@
 """Backtesting scripti — stratejiyi son 3 yıllık veriyle doğrular.
 
-Aynı sinyal motoru mantığını geçmiş veri üzerinde gün gün çalıştırır,
-pozisyon bazlı %20 stop-loss'u uygular ve portföy getirisini raporlar.
-Amaç: 3 aylık %15 hedefinin geçmiş piyasa döngülerinde ne kadar
-gerçekçi olduğunu görmek.
+Canlı motorla AYNI teknik skorlama mantığını (bot.signals.technical) geçmiş
+veri üzerinde gün gün çalıştırır, pozisyon bazlı %20 stop-loss'u uygular ve
+portföy performansını raporlar.
+
+ÖNEMLİ SINIRLAMA: Backtest yalnızca TEKNİK sinyalleri kullanır. Alpha Vantage
+temel verisi (haber duygusu, analist notları) geçmişe dönük / point-in-time
+alınamadığı (ve 25/gün limitli olduğu) için temel katman backtest dışıdır.
+Canlı çalışmada temel katman skora eklenir (ağırlık = fundamental.weight).
+
+Veri kaynağı: yfinance (anahtar gerektirmez). Sonuçlar backtest/results/
+altına yazılır (.gitignore'da).
 
 Kullanım:
     python -m backtest.backtest
+    python -m backtest.backtest --basket-limit 3   # her sepetten 3 sembol (hızlı)
 """
 from __future__ import annotations
 
-from bot.config import Settings  # noqa: F401 (adım 4'te kullanılacak)
+import argparse
+import logging
+import math
+import pickle
+import time
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+
+from bot.config import ROOT, Settings
+from bot.data import YFinanceClient
+from bot.models import Basket
+from bot.risk.risk_manager import check_stop_loss
+from bot.signals.technical import indicator_frame, indicators_from_rows, technical_score
+
+log = logging.getLogger("backtest")
+
+BARS_CACHE_DIR = ROOT / "data_cache" / "backtest_bars"
+RESULTS_DIR = ROOT / "backtest" / "results"
+TRADING_DAYS_PER_YEAR = 252
 
 
-def run_backtest(settings=None) -> dict:
-    """Backtest çalıştır ve özet metrik sözlüğü döndür.
+# ----------------------------------------------------------------------
+#  Veri (günlük cache'li — aynı gün tekrar çalıştırınca yeniden indirmez)
+# ----------------------------------------------------------------------
+def _load_bars(symbol: str, years: float) -> pd.DataFrame:
+    BARS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = BARS_CACHE_DIR / f"{symbol}_{years:g}y.pkl"
+    if cache_path.exists() and (time.time() - cache_path.stat().st_mtime) < 24 * 3600:
+        try:
+            return pickle.loads(cache_path.read_bytes())
+        except Exception:  # noqa: BLE001
+            pass
+    df = YFinanceClient().get_daily_bars(symbol, years=years)
+    if not df.empty:
+        cache_path.write_bytes(pickle.dumps(df))
+    return df
 
-    Metrikler: toplam getiri, yıllık getiri, max drawdown, kazanma oranı,
-    Sharpe (yaklaşık), işlem sayısı.
-    """
-    raise NotImplementedError("Adım 4'te doldurulacak")
+
+def _build_signal_frame(df: pd.DataFrame, tech_cfg: dict, buy: float, sell: float) -> pd.DataFrame:
+    """Her gün için (close, score, decision) üret — canlı skorlama mantığıyla."""
+    frame = indicator_frame(df, tech_cfg)
+    if frame.empty:
+        return pd.DataFrame()
+
+    rows = []
+    prev = None
+    for _, row in frame.iterrows():
+        ind = indicators_from_rows(row, prev)
+        score, _ = technical_score(ind, tech_cfg)
+        decision = "BUY" if score >= buy else "SELL" if score <= sell else "HOLD"
+        rows.append((row["close"], score, decision))
+        prev = row
+    return pd.DataFrame(rows, index=frame.index, columns=["close", "score", "decision"])
+
+
+# ----------------------------------------------------------------------
+#  Simülasyon
+# ----------------------------------------------------------------------
+@dataclass
+class Position:
+    shares: float
+    entry_price: float
+    entry_date: pd.Timestamp
+    basket: Basket
+
+
+@dataclass
+class Trade:
+    symbol: str
+    basket: str
+    entry_date: str
+    exit_date: str
+    entry_price: float
+    exit_price: float
+    shares: float
+    pnl: float
+    return_pct: float
+    reason: str
+
+
+@dataclass
+class BacktestResult:
+    initial_capital: float
+    final_equity: float
+    total_return_pct: float
+    annualized_return_pct: float
+    max_drawdown_pct: float
+    win_rate_pct: float
+    num_trades: int
+    start: str
+    end: str
+    benchmark_return_pct: Optional[float] = None
+    equity_curve: pd.Series = field(default=None, repr=False)
+    trades: list[Trade] = field(default_factory=list, repr=False)
+
+
+def run_backtest(
+    settings: Optional[Settings] = None,
+    *,
+    basket_limit: Optional[int] = None,
+    verbose: bool = True,
+) -> BacktestResult:
+    """Backtest çalıştır ve özet metrikleri döndür."""
+    settings = settings or Settings.load(strict=False)
+    strat = settings.strategy
+    tech_cfg = strat.technical
+    years = strat.backtest["lookback_years"]
+    initial = float(strat.backtest["initial_capital"])
+    stop_loss_pct = strat.risk["position_stop_loss_pct"]
+    buy = strat.raw.get("signals", {}).get("buy_threshold", 0.30)
+    sell = strat.raw.get("signals", {}).get("sell_threshold", -0.30)
+    positions_per_basket = strat.portfolio["positions_per_basket"]
+
+    # Sembol -> sepet ve sepet başına pozisyon büyüklüğü oranı
+    symbol_basket: dict[str, Basket] = {}
+    per_pos_frac: dict[Basket, float] = {}
+    universe: dict[Basket, list[str]] = {}
+    for name, cfg in strat.baskets.items():
+        basket = Basket(name)
+        syms = list(cfg.get("universe", []))
+        if basket_limit:
+            syms = syms[:basket_limit]
+        universe[basket] = syms
+        per_pos_frac[basket] = cfg["allocation_pct"] / 100.0 / positions_per_basket
+        for s in syms:
+            symbol_basket[s] = basket
+
+    # Her sembol için sinyal çerçevesi (veri yoksa atla)
+    sig_frames: dict[str, pd.DataFrame] = {}
+    for basket, syms in universe.items():
+        for sym in syms:
+            df = _load_bars(sym, years)
+            if df.empty or len(df) < tech_cfg["moving_averages"]["long"] + 5:
+                log.warning("Yetersiz veri, atlanıyor: %s", sym)
+                continue
+            sf = _build_signal_frame(df, tech_cfg, buy, sell)
+            if not sf.empty:
+                sig_frames[sym] = sf
+    if verbose:
+        log.info("%d sembol yüklendi.", len(sig_frames))
+
+    # Ana takvim = tüm sembollerin tarih birleşimi
+    all_dates = sorted(set().union(*[set(sf.index) for sf in sig_frames.values()]))
+
+    positions: dict[str, Position] = {}
+    cash = initial
+    last_price: dict[str, float] = {}
+    trades: list[Trade] = []
+    equity_dates, equity_vals = [], []
+
+    def lookup(sym: str, dt) -> Optional[pd.Series]:
+        sf = sig_frames.get(sym)
+        if sf is None or dt not in sf.index:
+            return None
+        return sf.loc[dt]
+
+    def close_position(sym: str, price: float, dt, reason: str) -> None:
+        nonlocal cash
+        pos = positions.pop(sym)
+        proceeds = pos.shares * price
+        cash += proceeds
+        pnl = proceeds - pos.shares * pos.entry_price
+        ret = (price - pos.entry_price) / pos.entry_price * 100.0
+        trades.append(Trade(
+            symbol=sym, basket=pos.basket.value,
+            entry_date=str(pos.entry_date.date()), exit_date=str(pd.Timestamp(dt).date()),
+            entry_price=round(pos.entry_price, 2), exit_price=round(price, 2),
+            shares=round(pos.shares, 4), pnl=round(pnl, 2), return_pct=round(ret, 2),
+            reason=reason,
+        ))
+
+    for dt in all_dates:
+        # Fiyatları güncelle
+        for sym in sig_frames:
+            row = lookup(sym, dt)
+            if row is not None:
+                last_price[sym] = float(row["close"])
+
+        # 1) Stop-loss ve SELL sinyalleri (açık pozisyonlar)
+        for sym in list(positions.keys()):
+            price = last_price.get(sym)
+            if price is None:
+                continue
+            pos = positions[sym]
+            sl = check_stop_loss(sym, pos.basket, pos.entry_price, price, stop_loss_pct)
+            row = lookup(sym, dt)
+            if sl is not None:
+                close_position(sym, price, dt, "stop_loss")
+            elif row is not None and row["decision"] == "SELL":
+                close_position(sym, price, dt, "signal_sell")
+
+        # 2) BUY: her sepette boş slotları en yüksek skorlu adaylarla doldur
+        equity = cash + sum(positions[s].shares * last_price.get(s, positions[s].entry_price)
+                            for s in positions)
+        for basket, syms in universe.items():
+            held = [s for s in positions if positions[s].basket == basket]
+            slots = positions_per_basket - len(held)
+            if slots <= 0:
+                continue
+            candidates = []
+            for sym in syms:
+                if sym in positions:
+                    continue
+                row = lookup(sym, dt)
+                if row is not None and row["decision"] == "BUY":
+                    candidates.append((sym, float(row["score"])))
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            for sym, _score in candidates[:slots]:
+                price = last_price.get(sym)
+                if not price:
+                    continue
+                target_value = per_pos_frac[basket] * equity
+                budget = min(target_value, cash)
+                shares = math.floor(budget / price)
+                if shares <= 0:
+                    continue
+                cash -= shares * price
+                positions[sym] = Position(shares, price, pd.Timestamp(dt), basket)
+
+        # Günlük özsermaye
+        equity = cash + sum(positions[s].shares * last_price.get(s, positions[s].entry_price)
+                            for s in positions)
+        equity_dates.append(pd.Timestamp(dt))
+        equity_vals.append(equity)
+
+    # Kalan pozisyonları son fiyattan kapat
+    for sym in list(positions.keys()):
+        close_position(sym, last_price[sym], all_dates[-1], "backtest_end")
+
+    equity_curve = pd.Series(equity_vals, index=equity_dates, name="equity")
+    return _metrics(equity_curve, trades, initial, years, sig_frames)
+
+
+def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: float,
+             sig_frames: dict[str, pd.DataFrame]) -> BacktestResult:
+    final = float(equity.iloc[-1]) if not equity.empty else initial
+    total_return = (final / initial - 1) * 100.0
+
+    span_years = max((equity.index[-1] - equity.index[0]).days / 365.25, 1e-9) if len(equity) > 1 else years
+    annualized = ((final / initial) ** (1 / span_years) - 1) * 100.0 if final > 0 else -100.0
+
+    running_max = equity.cummax()
+    drawdown = (equity - running_max) / running_max
+    max_dd = float(drawdown.min() * 100.0) if not equity.empty else 0.0
+
+    closed = [t for t in trades if t.reason != "backtest_end"] or trades
+    wins = [t for t in closed if t.pnl > 0]
+    win_rate = (len(wins) / len(closed) * 100.0) if closed else 0.0
+
+    # Benchmark: SPY al-tut (varsa)
+    benchmark = None
+    spy = sig_frames.get("SPY")
+    if spy is not None and len(spy) > 1:
+        benchmark = (spy["close"].iloc[-1] / spy["close"].iloc[0] - 1) * 100.0
+
+    return BacktestResult(
+        initial_capital=initial,
+        final_equity=round(final, 2),
+        total_return_pct=round(total_return, 2),
+        annualized_return_pct=round(annualized, 2),
+        max_drawdown_pct=round(max_dd, 2),
+        win_rate_pct=round(win_rate, 1),
+        num_trades=len(trades),
+        start=str(equity.index[0].date()) if len(equity) else "-",
+        end=str(equity.index[-1].date()) if len(equity) else "-",
+        benchmark_return_pct=round(benchmark, 2) if benchmark is not None else None,
+        equity_curve=equity,
+        trades=trades,
+    )
+
+
+def _print_report(r: BacktestResult) -> None:
+    print("\n" + "=" * 56)
+    print("  BACKTEST SONUCU (yalnızca teknik sinyaller)")
+    print("=" * 56)
+    print(f"  Dönem                : {r.start} → {r.end}")
+    print(f"  Başlangıç sermayesi  : ${r.initial_capital:,.0f}")
+    print(f"  Bitiş özsermayesi    : ${r.final_equity:,.2f}")
+    print(f"  Toplam getiri        : %{r.total_return_pct:+.2f}")
+    print(f"  Yıllık getiri (CAGR) : %{r.annualized_return_pct:+.2f}")
+    print(f"  Maks. düşüş (DD)     : %{r.max_drawdown_pct:.2f}")
+    print(f"  Kazanma oranı        : %{r.win_rate_pct:.1f}  ({r.num_trades} işlem)")
+    if r.benchmark_return_pct is not None:
+        print(f"  Benchmark (SPY al-tut): %{r.benchmark_return_pct:+.2f}")
+    # Hedef: 3 ayda %15. Gerçekleşen çeyreklik-eşdeğer getiri ile karşılaştır.
+    print("-" * 56)
+    quarters = max((pd.Timestamp(r.end) - pd.Timestamp(r.start)).days / 91.25, 1e-9)
+    realized_q = ((1 + r.total_return_pct / 100.0) ** (1 / quarters) - 1) * 100.0
+    verdict = "ULAŞILDI ✓" if realized_q >= 15.0 else "ULAŞILAMADI ✗"
+    print(f"  Gerçekleşen çeyreklik getiri: %{realized_q:+.2f}  (hedef %15) → {verdict}")
+    print("=" * 56 + "\n")
+
+
+def _save_results(r: BacktestResult) -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    if r.equity_curve is not None and not r.equity_curve.empty:
+        r.equity_curve.to_csv(RESULTS_DIR / "equity_curve.csv", header=True)
+    if r.trades:
+        pd.DataFrame([t.__dict__ for t in r.trades]).to_csv(RESULTS_DIR / "trades.csv", index=False)
+
+
+def main() -> None:
+    import sys
+    try:  # Windows konsolunda Türkçe/ok karakterleri için
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+    parser = argparse.ArgumentParser(description="Strateji backtest")
+    parser.add_argument("--basket-limit", type=int, default=None,
+                        help="Her sepetten en fazla N sembol (hızlı deneme için)")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    result = run_backtest(basket_limit=args.basket_limit)
+    _print_report(result)
+    _save_results(result)
 
 
 if __name__ == "__main__":
-    print(run_backtest())
+    main()
