@@ -71,7 +71,7 @@ GitHub Actions [`daily.yml`](.github/workflows/daily.yml) her hafta içi
 ## Geliştirme Durumu
 
 - [x] 1. Repo iskeleti + requirements.txt
-- [ ] 2. Veri çekme modülleri (Alpaca, yfinance, Alpha Vantage)
+- [x] 2. Veri çekme modülleri (Alpaca, yfinance, Alpha Vantage)
 - [ ] 3. Sinyal motoru (teknik + temel)
 - [ ] 4. Backtesting scripti (3 yıl)
 - [ ] 5. Slack bildirim modülü
