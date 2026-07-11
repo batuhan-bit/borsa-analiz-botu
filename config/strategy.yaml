@@ -17,25 +17,30 @@ portfolio:
 baskets:
   low_volatility:
     allocation_pct: 40
-    description: "S&P 500 geneli, düşük beta hisseler/ETF'ler"
+    description: "S&P 500 geneli, düşük beta hisseler/ETF'ler (savunmacı sektörler)"
     max_beta: 1.0
-    # İzlenecek başlangıç evreni (sinyal motoru bunları tarar)
-    universe: [SPY, XLP, XLU, JNJ, PG, KO, PEP, COST, WMT, MCD]
+    # İzlenecek evren (sinyal motoru bunları tarar). Genel ETF'ler dahil; kripto yok.
+    universe: [SPY, XLP, XLU, JNJ, PG, KO, PEP, COST, WMT, MCD,
+               CL, KMB, MDLZ, MO, NEE, DUK, SO, VZ, ABBV, MRK]
 
   high_volatility:
     allocation_pct: 35
-    description: "Yarı iletken/AI donanım, biyoteknoloji, kripto-korele hisseler"
-    universe: [NVDA, AMD, SMCI, TSM, AVGO, MRNA, BIIB, COIN, MSTR, MARA]
+    description: "Yarı iletken / AI donanım ve biyoteknoloji (kripto hariç)"
+    universe: [NVDA, AMD, SMCI, TSM, AVGO, MU, QCOM, ARM, MRVL, LRCX,
+               AMAT, ASML, PLTR, ANET, MRNA, BIIB, VRTX, REGN, CRSP, ALNY]
 
   under_radar:
     allocation_pct: 25
-    description: "500M-5B piyasa değeri, son 3 ayda anormal hacim artışı, sınırlı medya kapsamı"
-    market_cap_min: 500_000_000
-    market_cap_max: 5_000_000_000
-    abnormal_volume_lookback_days: 63     # ~3 ay işlem günü
-    abnormal_volume_multiplier: 2.0       # ortalama hacmin 2 katı
-    # Radar altı sepeti için evren dinamik taranır; başlangıç izleme listesi:
-    universe: [IONQ, RKLB, ASTS, OKLO, TDW, CELH, HIMS, POWL, APP, ANF]
+    description: >-
+      Gelecek vaadeden sektörlerde (yapay zeka, uzay, kuantum, nükleer,
+      savunma, sağlık teknolojisi, enerji depolama, robotik) faaliyet gösteren
+      şirketler. Piyasa değeri S&P 500 mega-cap'lerinden çok daha küçük
+      olabilir; öncelik: güçlü sektör ivmesi + sağlam bilanço veya önemli
+      anlaşma/sözleşme.
+    focus_sectors: [yapay_zeka, uzay, kuantum, nukleer, savunma,
+                    saglik_teknolojisi, enerji_depolama, robotik]
+    universe: [IONQ, RGTI, QBTS, RKLB, ASTS, LUNR, OKLO, SMR, NNE, FLNC,
+               TEM, SYM, ALAB, POWL, CELH, HIMS, TDW, APP, ANF, KTOS]
 
 # --- Teknik göstergeler ---
 technical:
