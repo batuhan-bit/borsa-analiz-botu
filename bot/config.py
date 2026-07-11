@@ -51,20 +51,28 @@ class Secrets:
     def load(cls, *, strict: bool = False) -> "Secrets":
         """Ortam değişkenlerinden sırları yükle.
 
-        strict=True ise eksik zorunlu değişkenlerde hata verir; geliştirme
-        sırasında (ör. sadece belirli bir modülü test ederken) strict=False
-        ile eksik değerler boş string olarak gelir.
+        strict=True ise yalnızca GERÇEKTEN zorunlu değişkenlerde hata verir.
+        Zorunlu tek şey SLACK_WEBHOOK_URL'dir (botun tek çıktısı bildirim).
+        Diğer tüm entegrasyonlar zarifçe devre dışı kalabilir:
+          - Alpaca yoksa  -> yfinance'e düşülür (anahtar gerekmez)
+          - Alpha Vantage yoksa -> yalnızca teknik analiz
+          - Google Sheets yoksa -> loglama/stop-loss atlanır
+        Böylece bir sağlayıcıdaki kesinti (ör. Alpaca) botu durdurmaz.
         """
-        getter = _require if strict else (lambda n: os.getenv(n, ""))
+        req = _require if strict else (lambda n: os.getenv(n, ""))
+
+        def opt(name: str, default: str = "") -> str:
+            return os.getenv(name, default)
+
         return cls(
-            alpaca_api_key=getter("ALPACA_API_KEY"),
-            alpaca_secret_key=getter("ALPACA_SECRET_KEY"),
-            alpaca_data_url=os.getenv("ALPACA_DATA_URL", "https://data.alpaca.markets"),
-            alpha_vantage_api_key=getter("ALPHA_VANTAGE_API_KEY"),
-            slack_webhook_url=getter("SLACK_WEBHOOK_URL"),
-            google_service_account_file=os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json"),
-            google_service_account_json=os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
-            google_sheet_id=getter("GOOGLE_SHEET_ID"),
+            alpaca_api_key=opt("ALPACA_API_KEY"),
+            alpaca_secret_key=opt("ALPACA_SECRET_KEY"),
+            alpaca_data_url=opt("ALPACA_DATA_URL", "https://data.alpaca.markets"),
+            alpha_vantage_api_key=opt("ALPHA_VANTAGE_API_KEY"),
+            slack_webhook_url=req("SLACK_WEBHOOK_URL"),
+            google_service_account_file=opt("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json"),
+            google_service_account_json=opt("GOOGLE_SERVICE_ACCOUNT_JSON"),
+            google_sheet_id=opt("GOOGLE_SHEET_ID"),
         )
 
 

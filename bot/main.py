@@ -70,6 +70,14 @@ def main() -> None:
     settings = Settings.load(strict=True)
     log.info("Bot başlatıldı. Hedef getiri: %%%s", settings.strategy.portfolio["target_return_pct"])
 
+    sec = settings.secrets
+    log.info(
+        "Entegrasyonlar — Alpaca: %s | Alpha Vantage: %s | Google Sheets: %s",
+        "açık" if sec.alpaca_api_key else "KAPALI (yfinance'e düşülüyor)",
+        "açık" if sec.alpha_vantage_api_key else "KAPALI (yalnızca teknik)",
+        "açık" if sec.google_sheet_id else "KAPALI (loglama yok)",
+    )
+
     engine = SignalEngine(settings)
     logger = SheetsLogger(settings.secrets)
     stop_loss_pct = settings.strategy.risk["position_stop_loss_pct"]

@@ -1,8 +1,28 @@
 """İskelet doğrulama testleri — strateji konfigürasyonu yükleniyor mu?"""
 from __future__ import annotations
 
-from bot.config import Strategy
+import pytest
+
+from bot.config import Secrets, Strategy
 from bot.models import Basket
+
+
+# --- Sır (secret) zorunluluk kuralları ---
+# Zorunlu tek şey Slack; Alpaca/AV/Sheets opsiyonel (zarif devre dışı).
+
+def test_strict_requires_only_slack(monkeypatch):
+    for k in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY", "ALPHA_VANTAGE_API_KEY", "GOOGLE_SHEET_ID"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.example/x")
+    sec = Secrets.load(strict=True)          # Alpaca yokken de raise ETMEMELİ
+    assert sec.slack_webhook_url
+    assert sec.alpaca_api_key == ""          # Alpaca opsiyonel -> boş
+
+
+def test_strict_missing_slack_raises(monkeypatch):
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    with pytest.raises(RuntimeError):
+        Secrets.load(strict=True)
 
 
 def test_strategy_loads():

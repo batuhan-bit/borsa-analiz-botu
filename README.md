@@ -52,10 +52,17 @@ pip install -r requirements.txt
 cp .env.example .env   # değerleri doldurun (Windows: copy)
 ```
 
-Gerekli sırlar (`.env` veya GitHub Secrets): `ALPACA_API_KEY`,
-`ALPACA_SECRET_KEY`, `ALPHA_VANTAGE_API_KEY`, `SLACK_WEBHOOK_URL`,
-`GOOGLE_SHEET_ID` ve Google service account (dosya ya da
-`GOOGLE_SERVICE_ACCOUNT_JSON`).
+Sırlar (`.env` veya GitHub Secrets):
+
+| Değişken | Durum | Not |
+|---|---|---|
+| `SLACK_WEBHOOK_URL` | **Zorunlu** | Botun tek çıktısı; olmadan çalışmaz |
+| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | Opsiyonel | Yoksa **yfinance**'e düşülür (anahtar gerekmez) |
+| `ALPHA_VANTAGE_API_KEY` | Opsiyonel | Yoksa yalnızca teknik analiz |
+| `GOOGLE_SHEET_ID` + service account (`GOOGLE_SERVICE_ACCOUNT_JSON` veya dosya) | Opsiyonel | Yoksa loglama/stop-loss atlanır |
+
+Tasarım gereği her entegrasyon zarifçe devre dışı kalabilir; bir sağlayıcıdaki
+kesinti (ör. Alpaca) botu durdurmaz.
 
 ## Çalıştırma
 
