@@ -42,7 +42,7 @@ class Secrets:
     alpaca_secret_key: str
     alpaca_data_url: str
     alpha_vantage_api_key: str
-    finnhub_api_key: str
+    marketaux_api_key: str
     slack_webhook_url: str
     google_service_account_file: str
     google_service_account_json: str
@@ -57,7 +57,7 @@ class Secrets:
         Diğer tüm entegrasyonlar zarifçe devre dışı kalabilir:
           - Alpaca yoksa  -> yfinance'e düşülür (anahtar gerekmez)
           - Alpha Vantage yoksa -> yalnızca teknik analiz
-          - Finnhub yoksa -> yalnızca Alpha Vantage temel verisi (çapraz
+          - Marketaux yoksa -> yalnızca Alpha Vantage temel verisi (çapraz
             doğrulama atlanır)
           - Google Sheets yoksa -> loglama/stop-loss atlanır
         Böylece bir sağlayıcıdaki kesinti (ör. Alpaca) botu durdurmaz.
@@ -72,7 +72,7 @@ class Secrets:
             alpaca_secret_key=opt("ALPACA_SECRET_KEY"),
             alpaca_data_url=opt("ALPACA_DATA_URL", "https://data.alpaca.markets"),
             alpha_vantage_api_key=opt("ALPHA_VANTAGE_API_KEY"),
-            finnhub_api_key=opt("FINNHUB_API_KEY"),
+            marketaux_api_key=opt("MARKETAUX_API_KEY"),
             slack_webhook_url=req("SLACK_WEBHOOK_URL"),
             google_service_account_file=opt("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json"),
             google_service_account_json=opt("GOOGLE_SERVICE_ACCOUNT_JSON"),

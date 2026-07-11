@@ -52,7 +52,7 @@ def test_run_skips_fundamental_when_no_provider(monkeypatch):
 
     eng = SignalEngine(s)
     eng._av = None       # AV yok
-    eng._finnhub = None  # Finnhub da yok
+    eng._marketaux = None  # Marketaux da yok
     df = _synthetic_df()
     monkeypatch.setattr(eng, "_get_bars", lambda symbol, *, years=1.0: df)
 
@@ -65,8 +65,8 @@ def test_run_skips_fundamental_when_no_provider(monkeypatch):
     assert called == []   # hiçbir sağlayıcı yokken temel çağrı yapılmaz
 
 
-def test_run_enriches_with_finnhub_only(monkeypatch):
-    """AV yok ama Finnhub varsa yine de zenginleştirme aşaması tetiklenmeli."""
+def test_run_enriches_with_marketaux_only(monkeypatch):
+    """AV yok ama Marketaux varsa yine de zenginleştirme aşaması tetiklenmeli."""
     s = Settings.load(strict=False)
     for _name, cfg in s.strategy.baskets.items():
         cfg["universe"] = cfg["universe"][:2]
@@ -74,7 +74,7 @@ def test_run_enriches_with_finnhub_only(monkeypatch):
 
     eng = SignalEngine(s)
     eng._av = None
-    eng._finnhub = object()   # Finnhub varmış gibi davran
+    eng._marketaux = object()   # Marketaux varmış gibi davran
     df = _synthetic_df()
     monkeypatch.setattr(eng, "_get_bars", lambda symbol, *, years=1.0: df)
 
@@ -84,4 +84,4 @@ def test_run_enriches_with_finnhub_only(monkeypatch):
 
     signals = eng.run()
     assert len(signals) == 6
-    assert len(called) > 0   # yalnızca Finnhub varken bile zenginleştirme çalışır
+    assert len(called) > 0   # yalnızca Marketaux varken bile zenginleştirme çalışır

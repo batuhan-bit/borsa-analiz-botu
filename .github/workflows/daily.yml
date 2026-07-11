@@ -53,7 +53,7 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           ALPACA_DATA_URL: ${{ secrets.ALPACA_DATA_URL }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          MARKETAUX_API_KEY: ${{ secrets.MARKETAUX_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_SERVICE_ACCOUNT_FILE: service_account.json
