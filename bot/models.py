@@ -34,6 +34,9 @@ class Signal:
     # 0..1 arası güven skoru (teknik + temel bileşenlerin ağırlıklı toplamı)
     score: float
     price: float
+    # İşaretli nihai skor [-1, 1] (pozitif=boğa). score = |raw_score|.
+    # Aday seçimi ve hata ayıklama için tutulur.
+    raw_score: float = 0.0
     reasons: list[str] = field(default_factory=list)   # insan-okur gerekçeler
     technical: dict[str, Any] = field(default_factory=dict)   # ham gösterge değerleri
     fundamental: dict[str, Any] = field(default_factory=dict)

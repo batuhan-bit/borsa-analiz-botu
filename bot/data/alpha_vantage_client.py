@@ -9,6 +9,7 @@ OVERVIEW (şirket genel bilgisi: piyasa değeri, analist hedefi vb.).
 from __future__ import annotations
 
 import logging
+import time
 
 import requests
 
@@ -19,6 +20,7 @@ log = logging.getLogger(__name__)
 
 BASE_URL = "https://www.alphavantage.co/query"
 DEFAULT_TTL = 12 * 3600  # temel veriler yavaş değişir; yarım gün cache yeterli
+MIN_INTERVAL = 1.2       # saniye — ücretsiz plan 1 istek/saniye burst limiti
 
 
 class AlphaVantageError(RuntimeError):
@@ -30,6 +32,13 @@ class AlphaVantageClient:
         self._api_key = secrets.alpha_vantage_api_key
         self._ttl = ttl_seconds
         self._session = requests.Session()
+        self._last_call = 0.0
+
+    def _throttle(self) -> None:
+        """Saniyede 1 istek burst limitine uy (gerçek HTTP çağrılarından önce)."""
+        wait = MIN_INTERVAL - (time.monotonic() - self._last_call)
+        if wait > 0:
+            time.sleep(wait)
 
     def _get(self, params: dict) -> dict:
         """Cache-öncelikli GET. Rate-limit/hata yanıtlarını tespit eder."""
@@ -39,8 +48,10 @@ class AlphaVantageClient:
             log.debug("Alpha Vantage cache hit: %s", params)
             return cached
 
+        self._throttle()
         full = {**params, "apikey": self._api_key}
         resp = self._session.get(BASE_URL, params=full, timeout=30)
+        self._last_call = time.monotonic()
         resp.raise_for_status()
         data = resp.json()
 

@@ -67,6 +67,10 @@ fundamental:
   use_analyst_ratings: true
   # Alpha Vantage / web sinyallerine verilecek göreli ağırlık
   weight: 0.35            # teknik ağırlık = 1 - weight
+  # Alpha Vantage ücretsiz limiti (25 istek/gün, 1 istek/sn) nedeniyle temel
+  # analiz YALNIZCA teknik olarak dikkate değer sembollere uygulanır:
+  min_technical_abs: 0.20    # |teknik skor| bu eşiğin altındaysa AV çağrısı yapma
+  max_symbols_per_run: 6     # her koşuda en çok bu kadar sembol zenginleştirilir
 
 # --- Risk yönetimi ---
 risk:
