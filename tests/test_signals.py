@@ -94,11 +94,11 @@ def test_fundamental_score_includes_web_sentiment():
     data = {"web_sentiment_score": 0.5}
     score, reasons = fundamental_score(data, FUND_CFG)
     assert score == pytest.approx(0.5)
-    assert any("Perplexity" in r for r in reasons)
+    assert any("Finnhub" in r for r in reasons)
 
 
 def test_fundamental_score_flags_source_disagreement():
-    # AV pozitif (+0.30/0.35≈+0.86 norm), Perplexity net negatif (-0.5) -> çelişki
+    # AV pozitif (+0.30/0.35≈+0.86 norm), Finnhub net negatif (-0.5) -> çelişki
     data = {"news_sentiment_score": 0.30, "web_sentiment_score": -0.5}
     _, reasons = fundamental_score(data, FUND_CFG)
     assert any("çelişkili" in r for r in reasons)

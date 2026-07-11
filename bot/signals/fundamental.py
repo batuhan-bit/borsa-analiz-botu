@@ -1,13 +1,13 @@
 """Temel analiz skoru.
 
 Girdiler: haber duygusu (Alpha Vantage NEWS_SENTIMENT), kazanç sürprizi
-(EARNINGS), analist hedef fiyatı (OVERVIEW), web duygusu (Perplexity — Alpha
-Vantage'dan bağımsız bir kaynak, çapraz doğrulama için). Çıktı: [-1, 1] skor
-+ gerekçeler.
+(EARNINGS), analist hedef fiyatı (OVERVIEW), web duygusu (Finnhub
+news-sentiment — AV'den bağımsız, ücretsiz bir kaynak, çapraz doğrulama
+için). Çıktı: [-1, 1] skor + gerekçeler.
 
-parse_* fonksiyonları ham Alpha Vantage yanıtlarını normalize eder;
-fundamental_score normalize edilmiş sözlükten skor üretir (ağdan bağımsız test
-edilebilir). Veri yoksa skor 0.0 ve boş gerekçe döner (teknik tarafa ağırlık kalır).
+parse_* fonksiyonları ham API yanıtlarını normalize eder; fundamental_score
+normalize edilmiş sözlükten skor üretir (ağdan bağımsız test edilebilir).
+Veri yoksa skor 0.0 ve boş gerekçe döner (teknik tarafa ağırlık kalır).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from .util import clip
 # Alpha Vantage haber duygu skoru kabaca [-0.35, 0.35] aralığında (Bearish..Bullish).
 _AV_SENTIMENT_SCALE = 0.35
 
-# İki bağımsız kaynak (AV haber duygusu, Perplexity web duygusu) bu kadardan
+# İki bağımsız kaynak (AV haber duygusu, Finnhub web duygusu) bu kadardan
 # fazla ayrışırsa (normalize [-1,1] skalada) "çelişkili kaynak" uyarısı verilir.
 _DISAGREEMENT_THRESHOLD = 0.6
 
@@ -61,6 +61,23 @@ def parse_analyst_upside(overview: dict, price: Optional[float]) -> Optional[flo
     return (target - price) / price * 100
 
 
+def parse_finnhub_sentiment(response: dict) -> Optional[float]:
+    """Finnhub /news-sentiment yanıtından [-1, 1] duygu skoru çıkar.
+
+    bullishPercent - bearishPercent zaten [-1, 1] aralığında ve doğrudan
+    yorumlanabilir (örn. +0.6 -> haberlerin %80'i boğa, %20'si ayı).
+    """
+    sentiment = response.get("sentiment") or {}
+    bull = sentiment.get("bullishPercent")
+    bear = sentiment.get("bearishPercent")
+    if bull is None or bear is None:
+        return None
+    try:
+        return clip(float(bull) - float(bear), -1, 1)
+    except (TypeError, ValueError):
+        return None
+
+
 def fundamental_score(data: dict[str, Any], cfg: dict[str, Any]) -> tuple[float, list[str]]:
     """Normalize edilmiş temel verilerden [-1, 1] skor ve gerekçeleri üret.
 
@@ -68,7 +85,7 @@ def fundamental_score(data: dict[str, Any], cfg: dict[str, Any]) -> tuple[float,
       - news_sentiment_score: float, AV ölçeğinde (~[-0.35, 0.35])
       - earnings_surprise_pct: float, yüzde
       - analyst_target_upside_pct: float, yüzde
-      - web_sentiment_score: float, [-1, 1] (Perplexity — bağımsız kaynak)
+      - web_sentiment_score: float, [-1, 1] (Finnhub — bağımsız kaynak)
     """
     components: list[float] = []
     reasons: list[str] = []
@@ -97,12 +114,12 @@ def fundamental_score(data: dict[str, Any], cfg: dict[str, Any]) -> tuple[float,
     if ws is not None:
         components.append(clip(ws, -1, 1))
         label = "pozitif" if ws > 0.15 else "negatif" if ws < -0.15 else "nötr"
-        reasons.append(f"Web duygusu (Perplexity) {ws:+.2f} ({label})")
+        reasons.append(f"Web duygusu (Finnhub) {ws:+.2f} ({label})")
 
     # Çapraz doğrulama: iki bağımsız kaynak ters yöne işaret ediyorsa uyar
     if ns_norm is not None and ws is not None and abs(ns_norm - ws) >= _DISAGREEMENT_THRESHOLD:
         reasons.append(
-            f"⚠️ Kaynaklar çelişkili (AV {ns_norm:+.2f} vs Perplexity {ws:+.2f}) — dikkatli değerlendirin"
+            f"⚠️ Kaynaklar çelişkili (AV {ns_norm:+.2f} vs Finnhub {ws:+.2f}) — dikkatli değerlendirin"
         )
 
     if not components:

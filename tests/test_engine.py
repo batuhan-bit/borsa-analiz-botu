@@ -52,7 +52,7 @@ def test_run_skips_fundamental_when_no_provider(monkeypatch):
 
     eng = SignalEngine(s)
     eng._av = None       # AV yok
-    eng._pplx = None     # Perplexity de yok
+    eng._finnhub = None  # Finnhub da yok
     df = _synthetic_df()
     monkeypatch.setattr(eng, "_get_bars", lambda symbol, *, years=1.0: df)
 
@@ -65,8 +65,8 @@ def test_run_skips_fundamental_when_no_provider(monkeypatch):
     assert called == []   # hiçbir sağlayıcı yokken temel çağrı yapılmaz
 
 
-def test_run_enriches_with_perplexity_only(monkeypatch):
-    """AV yok ama Perplexity varsa yine de zenginleştirme aşaması tetiklenmeli."""
+def test_run_enriches_with_finnhub_only(monkeypatch):
+    """AV yok ama Finnhub varsa yine de zenginleştirme aşaması tetiklenmeli."""
     s = Settings.load(strict=False)
     for _name, cfg in s.strategy.baskets.items():
         cfg["universe"] = cfg["universe"][:2]
@@ -74,7 +74,7 @@ def test_run_enriches_with_perplexity_only(monkeypatch):
 
     eng = SignalEngine(s)
     eng._av = None
-    eng._pplx = object()   # Perplexity varmış gibi davran
+    eng._finnhub = object()   # Finnhub varmış gibi davran
     df = _synthetic_df()
     monkeypatch.setattr(eng, "_get_bars", lambda symbol, *, years=1.0: df)
 
@@ -84,4 +84,4 @@ def test_run_enriches_with_perplexity_only(monkeypatch):
 
     signals = eng.run()
     assert len(signals) == 6
-    assert len(called) > 0   # yalnızca Perplexity varken bile zenginleştirme çalışır
+    assert len(called) > 0   # yalnızca Finnhub varken bile zenginleştirme çalışır
