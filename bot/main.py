@@ -2,10 +2,11 @@
 
 Akış:
   1. Konfigürasyonu yükle (sırlar + strateji)
-  2. Sinyal motorunu çalıştır (tüm sepetleri tara)
-  3. Açık pozisyonlar için stop-loss kontrolü (Sheets'ten okunan pozisyonlar)
-  4. Sinyalleri Google Sheets'e logla + performans anlık görüntüsü
-  5. Slack'e günlük bildirim gönder
+  2. Açık pozisyonları Sheets'ten oku
+  3. Sinyal motorunu çalıştır — SELL yalnızca portföydeki semboller için
+  4. Açık pozisyonlar için stop-loss kontrolü
+  5. Sinyalleri Google Sheets'e logla + performans anlık görüntüsü
+  6. Slack'e günlük bildirim gönder
 
 Kullanım:
     python -m bot.main
@@ -33,12 +34,11 @@ def _safe_basket(value: str) -> Basket:
         return Basket.LOW_VOLATILITY
 
 
-def _stop_loss_signals(engine, logger, stop_loss_pct):
-    """Açık pozisyonları oku, fiyatlarını çek, stop-loss + portföy değeri hesapla.
+def _stop_loss_signals(positions, engine, stop_loss_pct):
+    """Verilen açık pozisyonların fiyatlarını çek, stop-loss + portföy değeri hesapla.
 
     Döndürür: (stop_loss_sinyalleri, portföy_değeri, açık_pozisyon_sayısı).
     """
-    positions = logger.get_open_positions()
     stop_signals = []
     holdings_value = 0.0
     for pos in positions:
@@ -82,11 +82,17 @@ def main() -> None:
     logger = SheetsLogger(settings.secrets)
     stop_loss_pct = settings.strategy.risk["position_stop_loss_pct"]
 
-    # 2. Sinyal üretimi
-    signals = engine.run()
+    # Açık pozisyonları bir kez oku — hem SELL filtresi hem stop-loss için
+    positions = logger.get_open_positions()
+    held_symbols = {str(p["symbol"]).strip().upper() for p in positions if p.get("symbol")}
+    if held_symbols:
+        log.info("Portföydeki semboller (SELL yalnızca bunlar için): %s", ", ".join(sorted(held_symbols)))
+
+    # 2. Sinyal üretimi — SELL yalnızca portföydeki semboller için üretilir
+    signals = engine.run(held_symbols=held_symbols)
 
     # 3. Stop-loss kontrolü (açık pozisyonlar) — en öne alınır
-    stop_signals, portfolio_value, open_count = _stop_loss_signals(engine, logger, stop_loss_pct)
+    stop_signals, portfolio_value, open_count = _stop_loss_signals(positions, engine, stop_loss_pct)
     signals = stop_signals + signals
     log.info("%d sinyal (%d stop-loss dahil).", len(signals), len(stop_signals))
 

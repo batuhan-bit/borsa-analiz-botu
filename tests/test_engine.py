@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from bot.config import Settings
+from bot.models import Signal, SignalType
 from bot.signals import SignalEngine
 
 
@@ -85,3 +86,29 @@ def test_run_enriches_with_marketaux_only(monkeypatch):
     signals = eng.run()
     assert len(signals) == 6
     assert len(called) > 0   # yalnızca Marketaux varken bile zenginleştirme çalışır
+
+
+def test_sell_only_for_held_symbols(monkeypatch):
+    """SELL yalnızca portföydeki (held) semboller için üretilmeli; diğerleri HOLD."""
+    s = Settings.load(strict=False)
+    for _name, cfg in s.strategy.baskets.items():
+        cfg["universe"] = cfg["universe"][:2]
+
+    eng = SignalEngine(s)
+    eng._av = None
+    eng._marketaux = None
+
+    # Her sembol için SELL üreten sahte değerlendirme
+    def fake_eval(symbol, basket, *, fetch_fundamental=True):
+        return Signal(symbol, basket, SignalType.SELL, 0.5, 100.0, raw_score=-0.5, reasons=["ayı"])
+    monkeypatch.setattr(eng, "evaluate_symbol", fake_eval)
+
+    # Hiçbiri portföyde değil -> tüm SELL'ler HOLD'a çevrilir
+    out = eng.run(held_symbols=set())
+    assert all(x.signal is SignalType.HOLD for x in out)
+
+    # Biri portföyde -> yalnızca onun SELL'i korunur
+    held_sym = out[0].symbol
+    out2 = eng.run(held_symbols={held_sym})
+    sells = [x for x in out2 if x.signal is SignalType.SELL]
+    assert len(sells) == 1 and sells[0].symbol == held_sym

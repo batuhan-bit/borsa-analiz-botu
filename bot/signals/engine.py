@@ -171,7 +171,7 @@ class SignalEngine:
             fundamental=fdata,
         )
 
-    def run(self) -> list[Signal]:
+    def run(self, held_symbols: set[str] | None = None) -> list[Signal]:
         """Tüm sepetlerdeki evreni tara ve sinyal listesi döndür.
 
         İki aşama:
@@ -179,7 +179,13 @@ class SignalEngine:
           2. Teknik olarak en dikkate değer semboller (|skor| >= eşik, en çok N)
              Alpha Vantage + (varsa) Marketaux ile zenginleştirilir — limitli
              API'lerin bütçesini aşmadan.
+
+        held_symbols: portföyde açık pozisyonu olan semboller (Sheets'ten).
+        SELL sinyali YALNIZCA bu semboller için üretilir; elde olmayan bir
+        hissenin düşüş kararı "alma/uzak dur" anlamına geldiği için HOLD'a
+        çevrilir (kısa satış stratejinin parçası değil).
         """
+        held = {s.strip().upper() for s in (held_symbols or set())}
         # 1. Aşama: teknik tarama (fundamental yok)
         results: dict[str, Signal] = {}
         order: list[str] = []
@@ -212,5 +218,12 @@ class SignalEngine:
                     log.info("%s zenginleştirildi -> %s (skor %.2f)", symbol, enriched.signal.value, enriched.raw_score)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Zenginleştirme hatası %s: %s", symbol, exc)
+
+        # 3. Aşama: portföyde olmayan sembollerin SELL kararını HOLD'a çevir
+        for symbol in order:
+            sig = results[symbol]
+            if sig.signal is SignalType.SELL and symbol.upper() not in held:
+                sig.signal = SignalType.HOLD
+                log.info("%s SELL -> HOLD (portföyde yok, satılacak pozisyon yok)", symbol)
 
         return [results[s] for s in order]
