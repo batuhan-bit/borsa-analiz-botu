@@ -12,7 +12,7 @@ from typing import Any, Optional
 import pandas as pd
 
 from ..config import Settings
-from ..data import AlpacaClient, AlphaVantageClient, YFinanceClient
+from ..data import AlpacaClient, AlphaVantageClient, PerplexityClient, YFinanceClient
 from ..models import Basket, Signal, SignalType
 from .fundamental import (
     fundamental_score,
@@ -38,6 +38,10 @@ class SignalEngine:
         self._av: Optional[AlphaVantageClient] = None
         if settings.secrets.alpha_vantage_api_key:
             self._av = AlphaVantageClient(settings.secrets)
+        # Perplexity: opsiyonel çapraz doğrulama kaynağı (yoksa yalnızca AV kullanılır)
+        self._pplx: Optional[PerplexityClient] = None
+        if settings.secrets.perplexity_api_key:
+            self._pplx = PerplexityClient(settings.secrets)
         self._bars_cache: dict[tuple[str, float], pd.DataFrame] = {}
 
     # --- Veri ---
@@ -60,28 +64,42 @@ class SignalEngine:
         return float(df["close"].iloc[-1])
 
     def _get_fundamental_data(self, symbol: str, price: Optional[float]) -> dict[str, Any]:
-        """Alpha Vantage'dan temel veriyi çek ve normalize et (anahtar yoksa {})."""
-        if self._av is None:
-            return {}
+        """Temel veriyi çek ve normalize et (Alpha Vantage + varsa Perplexity).
+
+        Her iki kaynak da opsiyoneldir: anahtar yoksa o kaynak atlanır.
+        İkisi de yoksa {} döner (teknik ağırlık tam kalır).
+        """
         data: dict[str, Any] = {}
-        try:
-            data["news_sentiment_score"] = parse_news_sentiment(
-                self._av.get_news_sentiment(symbol), symbol
-            )
-        except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
-            log.warning("Haber duygusu alınamadı (%s): %s", symbol, exc)
-        try:
-            data["earnings_surprise_pct"] = parse_earnings_surprise(
-                self._av.get_earnings(symbol)
-            )
-        except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
-            log.warning("Kazanç verisi alınamadı (%s): %s", symbol, exc)
-        try:
-            data["analyst_target_upside_pct"] = parse_analyst_upside(
-                self._av.get_overview(symbol), price
-            )
-        except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
-            log.warning("Şirket özeti alınamadı (%s): %s", symbol, exc)
+
+        if self._av is not None:
+            try:
+                data["news_sentiment_score"] = parse_news_sentiment(
+                    self._av.get_news_sentiment(symbol), symbol
+                )
+            except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
+                log.warning("Haber duygusu alınamadı (%s): %s", symbol, exc)
+            try:
+                data["earnings_surprise_pct"] = parse_earnings_surprise(
+                    self._av.get_earnings(symbol)
+                )
+            except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
+                log.warning("Kazanç verisi alınamadı (%s): %s", symbol, exc)
+            try:
+                data["analyst_target_upside_pct"] = parse_analyst_upside(
+                    self._av.get_overview(symbol), price
+                )
+            except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
+                log.warning("Şirket özeti alınamadı (%s): %s", symbol, exc)
+
+        if self._pplx is not None:
+            try:
+                web = self._pplx.get_web_sentiment(symbol)
+                data["web_sentiment_score"] = web.get("score")
+                if web.get("summary"):
+                    data["web_sentiment_summary"] = web["summary"]
+            except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
+                log.warning("Perplexity web duygusu alınamadı (%s): %s", symbol, exc)
+
         # Tümü None ise boş kabul et (teknik ağırlık tam kalsın)
         if all(v is None for v in data.values()):
             return {}
@@ -159,8 +177,8 @@ class SignalEngine:
         İki aşama:
           1. Tüm semboller yalnızca teknik olarak değerlendirilir (ucuz).
           2. Teknik olarak en dikkate değer semboller (|skor| >= eşik, en çok N)
-             Alpha Vantage temel verisiyle zenginleştirilir — ücretsiz API
-             limitini aşmadan.
+             Alpha Vantage + (varsa) Perplexity ile zenginleştirilir — ücretli/
+             limitli API'lerin bütçesini aşmadan.
         """
         # 1. Aşama: teknik tarama (fundamental yok)
         results: dict[str, Signal] = {}
@@ -177,7 +195,7 @@ class SignalEngine:
                     log.warning("Değerlendirme hatası %s: %s", symbol, exc)
 
         # 2. Aşama: güçlü adayları temel veriyle zenginleştir
-        if self._av is not None:
+        if self._av is not None or self._pplx is not None:
             fcfg = self._strategy.fundamental
             min_abs = fcfg.get("min_technical_abs", 0.20)
             max_syms = fcfg.get("max_symbols_per_run", 6)

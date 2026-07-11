@@ -90,6 +90,26 @@ def test_fundamental_score_empty():
     assert fundamental_score({}, FUND_CFG) == (0.0, [])
 
 
+def test_fundamental_score_includes_web_sentiment():
+    data = {"web_sentiment_score": 0.5}
+    score, reasons = fundamental_score(data, FUND_CFG)
+    assert score == pytest.approx(0.5)
+    assert any("Perplexity" in r for r in reasons)
+
+
+def test_fundamental_score_flags_source_disagreement():
+    # AV pozitif (+0.30/0.35≈+0.86 norm), Perplexity net negatif (-0.5) -> çelişki
+    data = {"news_sentiment_score": 0.30, "web_sentiment_score": -0.5}
+    _, reasons = fundamental_score(data, FUND_CFG)
+    assert any("çelişkili" in r for r in reasons)
+
+
+def test_fundamental_score_no_disagreement_when_aligned():
+    data = {"news_sentiment_score": 0.20, "web_sentiment_score": 0.5}
+    _, reasons = fundamental_score(data, FUND_CFG)
+    assert not any("çelişkili" in r for r in reasons)
+
+
 def test_parse_news_sentiment():
     resp = {
         "feed": [

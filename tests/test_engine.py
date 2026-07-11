@@ -45,13 +45,14 @@ def test_run_caps_fundamental_enrichment(monkeypatch):
     assert len(called) == 2                     # yalnızca 2 sembol zenginleştirildi (cap)
 
 
-def test_run_skips_fundamental_when_no_av(monkeypatch):
+def test_run_skips_fundamental_when_no_provider(monkeypatch):
     s = Settings.load(strict=False)
     for _name, cfg in s.strategy.baskets.items():
         cfg["universe"] = cfg["universe"][:2]
 
     eng = SignalEngine(s)
     eng._av = None       # AV yok
+    eng._pplx = None     # Perplexity de yok
     df = _synthetic_df()
     monkeypatch.setattr(eng, "_get_bars", lambda symbol, *, years=1.0: df)
 
@@ -61,4 +62,26 @@ def test_run_skips_fundamental_when_no_av(monkeypatch):
 
     signals = eng.run()
     assert len(signals) == 6
-    assert called == []   # AV yokken hiç temel çağrı yapılmaz
+    assert called == []   # hiçbir sağlayıcı yokken temel çağrı yapılmaz
+
+
+def test_run_enriches_with_perplexity_only(monkeypatch):
+    """AV yok ama Perplexity varsa yine de zenginleştirme aşaması tetiklenmeli."""
+    s = Settings.load(strict=False)
+    for _name, cfg in s.strategy.baskets.items():
+        cfg["universe"] = cfg["universe"][:2]
+    s.strategy.raw["fundamental"]["min_technical_abs"] = 0.0
+
+    eng = SignalEngine(s)
+    eng._av = None
+    eng._pplx = object()   # Perplexity varmış gibi davran
+    df = _synthetic_df()
+    monkeypatch.setattr(eng, "_get_bars", lambda symbol, *, years=1.0: df)
+
+    called: list[str] = []
+    monkeypatch.setattr(eng, "_get_fundamental_data",
+                        lambda symbol, price: (called.append(symbol) or {}))
+
+    signals = eng.run()
+    assert len(signals) == 6
+    assert len(called) > 0   # yalnızca Perplexity varken bile zenginleştirme çalışır

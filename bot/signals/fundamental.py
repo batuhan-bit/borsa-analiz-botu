@@ -1,7 +1,9 @@
 """Temel analiz skoru.
 
 Girdiler: haber duygusu (Alpha Vantage NEWS_SENTIMENT), kazanç sürprizi
-(EARNINGS), analist hedef fiyatı (OVERVIEW). Çıktı: [-1, 1] skor + gerekçeler.
+(EARNINGS), analist hedef fiyatı (OVERVIEW), web duygusu (Perplexity — Alpha
+Vantage'dan bağımsız bir kaynak, çapraz doğrulama için). Çıktı: [-1, 1] skor
++ gerekçeler.
 
 parse_* fonksiyonları ham Alpha Vantage yanıtlarını normalize eder;
 fundamental_score normalize edilmiş sözlükten skor üretir (ağdan bağımsız test
@@ -15,6 +17,10 @@ from .util import clip
 
 # Alpha Vantage haber duygu skoru kabaca [-0.35, 0.35] aralığında (Bearish..Bullish).
 _AV_SENTIMENT_SCALE = 0.35
+
+# İki bağımsız kaynak (AV haber duygusu, Perplexity web duygusu) bu kadardan
+# fazla ayrışırsa (normalize [-1,1] skalada) "çelişkili kaynak" uyarısı verilir.
+_DISAGREEMENT_THRESHOLD = 0.6
 
 
 def parse_news_sentiment(response: dict, symbol: str) -> Optional[float]:
@@ -62,15 +68,18 @@ def fundamental_score(data: dict[str, Any], cfg: dict[str, Any]) -> tuple[float,
       - news_sentiment_score: float, AV ölçeğinde (~[-0.35, 0.35])
       - earnings_surprise_pct: float, yüzde
       - analyst_target_upside_pct: float, yüzde
+      - web_sentiment_score: float, [-1, 1] (Perplexity — bağımsız kaynak)
     """
     components: list[float] = []
     reasons: list[str] = []
 
+    ns_norm: Optional[float] = None
     ns = data.get("news_sentiment_score")
     if ns is not None:
-        components.append(clip(ns / _AV_SENTIMENT_SCALE, -1, 1))
+        ns_norm = clip(ns / _AV_SENTIMENT_SCALE, -1, 1)
+        components.append(ns_norm)
         label = "pozitif" if ns > 0.15 else "negatif" if ns < -0.15 else "nötr"
-        reasons.append(f"Haber duygusu {ns:+.2f} ({label})")
+        reasons.append(f"Haber duygusu (AV) {ns:+.2f} ({label})")
 
     es = data.get("earnings_surprise_pct")
     if es is not None:
@@ -83,6 +92,18 @@ def fundamental_score(data: dict[str, Any], cfg: dict[str, Any]) -> tuple[float,
         # ±%25 potansiyel → ±1 skor
         components.append(clip(up / 25.0, -1, 1))
         reasons.append(f"Analist hedefi %{up:+.0f} potansiyel")
+
+    ws = data.get("web_sentiment_score")
+    if ws is not None:
+        components.append(clip(ws, -1, 1))
+        label = "pozitif" if ws > 0.15 else "negatif" if ws < -0.15 else "nötr"
+        reasons.append(f"Web duygusu (Perplexity) {ws:+.2f} ({label})")
+
+    # Çapraz doğrulama: iki bağımsız kaynak ters yöne işaret ediyorsa uyar
+    if ns_norm is not None and ws is not None and abs(ns_norm - ws) >= _DISAGREEMENT_THRESHOLD:
+        reasons.append(
+            f"⚠️ Kaynaklar çelişkili (AV {ns_norm:+.2f} vs Perplexity {ws:+.2f}) — dikkatli değerlendirin"
+        )
 
     if not components:
         return 0.0, []
