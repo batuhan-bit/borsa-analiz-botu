@@ -12,14 +12,23 @@ from typing import Any, Optional
 import pandas as pd
 
 from ..config import Settings
-from ..data import AlpacaClient, AlphaVantageClient, MarketauxClient, YFinanceClient
+from ..data import (
+    AlpacaClient,
+    AlphaVantageClient,
+    FinnhubInsiderClient,
+    MarketauxClient,
+    YFinanceClient,
+)
 from ..models import Basket, Signal, SignalType
 from .fundamental import (
+    fundamental_notes,
     fundamental_score,
     parse_analyst_upside,
     parse_earnings_surprise,
+    parse_insider_net,
     parse_marketaux_sentiment,
     parse_news_sentiment,
+    parse_overview_fundamentals,
 )
 from .technical import compute_indicators, technical_score
 
@@ -43,6 +52,10 @@ class SignalEngine:
         self._marketaux: Optional[MarketauxClient] = None
         if settings.secrets.marketaux_api_key:
             self._marketaux = MarketauxClient(settings.secrets)
+        # Finnhub içeriden-işlem: opsiyonel (uç nokta ücretsizse çalışır, değilse atlanır)
+        self._insider: Optional[FinnhubInsiderClient] = None
+        if settings.secrets.finnhub_api_key:
+            self._insider = FinnhubInsiderClient(settings.secrets)
         self._bars_cache: dict[tuple[str, float], pd.DataFrame] = {}
 
     # --- Veri ---
@@ -86,9 +99,9 @@ class SignalEngine:
             except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
                 log.warning("Kazanç verisi alınamadı (%s): %s", symbol, exc)
             try:
-                data["analyst_target_upside_pct"] = parse_analyst_upside(
-                    self._av.get_overview(symbol), price
-                )
+                overview = self._av.get_overview(symbol)
+                data["analyst_target_upside_pct"] = parse_analyst_upside(overview, price)
+                data.update(parse_overview_fundamentals(overview))  # marj, eps, büyüme
             except Exception as exc:  # noqa: BLE001  (rate-limit/ağ/parse)
                 log.warning("Şirket özeti alınamadı (%s): %s", symbol, exc)
 
@@ -99,6 +112,16 @@ class SignalEngine:
                 )
             except Exception as exc:  # noqa: BLE001  (rate-limit/yetki/ağ/parse)
                 log.warning("Marketaux web duygusu alınamadı (%s): %s", symbol, exc)
+
+        if self._insider is not None:
+            try:
+                net = parse_insider_net(self._insider.get_insider_transactions(symbol))
+                if net is not None:
+                    data["insider_net_shares"] = net["net_shares"]
+                    data["insider_buys"] = net["buys"]
+                    data["insider_sells"] = net["sells"]
+            except Exception as exc:  # noqa: BLE001  (yetki/rate-limit/ağ/parse)
+                log.warning("İçeriden işlem verisi alınamadı (%s): %s", symbol, exc)
 
         # Tümü None ise boş kabul et (teknik ağırlık tam kalsın)
         if all(v is None for v in data.values()):
@@ -177,6 +200,7 @@ class SignalEngine:
             technical={k: indicators.get(k) for k in _TECH_LOG_KEYS},
             fundamental=fdata,
             levels=levels,
+            notes=fundamental_notes(fdata) if fdata else [],
         )
 
     def run(self, held_symbols: set[str] | None = None) -> list[Signal]:

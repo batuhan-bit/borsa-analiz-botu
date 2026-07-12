@@ -43,6 +43,7 @@ class Secrets:
     alpaca_data_url: str
     alpha_vantage_api_key: str
     marketaux_api_key: str
+    finnhub_api_key: str
     slack_webhook_url: str
     google_service_account_file: str
     google_service_account_json: str
@@ -73,6 +74,7 @@ class Secrets:
             alpaca_data_url=opt("ALPACA_DATA_URL", "https://data.alpaca.markets"),
             alpha_vantage_api_key=opt("ALPHA_VANTAGE_API_KEY"),
             marketaux_api_key=opt("MARKETAUX_API_KEY"),
+            finnhub_api_key=opt("FINNHUB_API_KEY"),
             slack_webhook_url=req("SLACK_WEBHOOK_URL"),
             google_service_account_file=opt("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json"),
             google_service_account_json=opt("GOOGLE_SERVICE_ACCOUNT_JSON"),
