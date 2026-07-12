@@ -158,6 +158,23 @@ def technical_score(indicators: dict[str, Any], cfg: dict[str, Any]) -> tuple[fl
         elif short < long:
             components.append(-0.4)
 
+    # --- Fiyatın ortalamalara göre konumu (TREND FİLTRESİ) ---
+    # Fiyat MA'ların ALTINDAysa hisse kısa/orta vade düşüşte demektir. MA50>MA200
+    # (gecikmeli) olsa bile bu, "kırılmış ama göstergeleri henüz dönmemiş" durumu
+    # yakalar ve düşen bıçağı almayı engeller. Ağırlıklar strategy.yaml'den gelir.
+    price = indicators.get("close")
+    tf = cfg.get("trend_filter", {})
+    w_long = tf.get("price_vs_ma_long", 0.6)
+    w_short = tf.get("price_vs_ma_short", 0.4)
+    if price is not None and long is not None:
+        if price >= long:
+            components.append(w_long)
+        else:
+            components.append(-w_long)
+            reasons.append("Fiyat 200G ortalamanın altında (trend zayıf)")
+    if price is not None and short is not None:
+        components.append(w_short if price >= short else -w_short)
+
     if not components:
         return 0.0, reasons
 

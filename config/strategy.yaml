@@ -58,6 +58,12 @@ technical:
   volume_confirmation:
     lookback_days: 20
     min_multiplier: 1.5   # sinyal teyidi için hacim ortalamanın 1.5 katı
+  # Trend filtresi: fiyatın hareketli ortalamalara göre konumu. Fiyat MA'ların
+  # altındaysa (kısa/orta vade düşüş) skor cezalandırılır — düşen bıçağı almayı
+  # engeller. Değer büyüdükçe filtre sertleşir.
+  trend_filter:
+    price_vs_ma_long: 0.6    # fiyat 200G ortalamanın altında/üstünde
+    price_vs_ma_short: 0.4   # fiyat 50G ortalamanın altında/üstünde
 
 # --- Sinyal kararı ---
 # Nihai skor [-1, 1] aralığında. Eşiklere göre BUY / SELL / HOLD.
