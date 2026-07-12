@@ -40,6 +40,8 @@ class Signal:
     reasons: list[str] = field(default_factory=list)   # insan-okur gerekçeler
     technical: dict[str, Any] = field(default_factory=dict)   # ham gösterge değerleri
     fundamental: dict[str, Any] = field(default_factory=dict)
+    levels: dict[str, Any] = field(default_factory=dict)      # BUY için stop/destek/hedef
+    notes: list[str] = field(default_factory=list)            # önemli uyarılar (ayrı iletilir)
     generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_row(self) -> list[Any]:

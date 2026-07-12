@@ -44,11 +44,23 @@ def _basket_label(value: str) -> str:
 def _format_signal_line(sig: Signal) -> str:
     reasons = "; ".join(sig.reasons) if sig.reasons else "-"
     emoji = _EMOJI.get(sig.signal, "•")
-    return (
+    line = (
         f"{emoji} *{sig.symbol}*  ${sig.price:,.2f}  "
         f"_(skor {sig.score:.2f}, {_basket_label(sig.basket.value)})_\n"
         f"      {reasons}"
     )
+    # BUY için fiyat seviyeleri
+    lv = sig.levels
+    if lv:
+        rr = f" · R/R {lv['risk_reward']}" if lv.get("risk_reward") else ""
+        line += (
+            f"\n      🎯 Stop ${lv['stop']:,.2f} · Destek ${lv['support']:,.2f} · "
+            f"Hedef ${lv['target1']:,.2f} → ${lv['target2']:,.2f}{rr}"
+        )
+    # Önemli notlar (ayrı satır, vurgulu)
+    for note in sig.notes:
+        line += f"\n      {note}"
+    return line
 
 
 def _chunk_sections(lines: list[str]) -> list[dict]:

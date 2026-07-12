@@ -144,31 +144,39 @@ class SignalEngine:
 
         fdata: dict[str, Any] = {}
         fund_reasons: list[str] = []
+        fund_score = 0.0
         if fetch_fundamental:
             fdata = self._get_fundamental_data(symbol, price)
-            _, fund_reasons = fundamental_score(fdata, self._strategy.fundamental)
+            fund_score, fund_reasons = fundamental_score(fdata, self._strategy.fundamental)
 
         weight = self._strategy.fundamental.get("weight", 0.35)
-        if fdata:
-            fund_score, _ = fundamental_score(fdata, self._strategy.fundamental)
-            final = (1 - weight) * tech_score + weight * fund_score
-        else:
-            final = tech_score
+        final = (1 - weight) * tech_score + weight * fund_score if fdata else tech_score
 
         reasons = tech_reasons + fund_reasons
         if not reasons:
             reasons = [self._trend_summary(indicators)]
 
+        signal_type = self._decide(final)
+
+        # BUY için fiyat seviyeleri (stop/destek/hedef)
+        levels: dict[str, Any] = {}
+        if signal_type is SignalType.BUY:
+            from .levels import price_levels
+            levels = price_levels(
+                df, price, max_loss_pct=self._strategy.risk["position_stop_loss_pct"]
+            )
+
         return Signal(
             symbol=symbol,
             basket=basket,
-            signal=self._decide(final),
+            signal=signal_type,
             score=min(abs(final), 1.0),
             price=price,
             raw_score=final,
             reasons=reasons,
             technical={k: indicators.get(k) for k in _TECH_LOG_KEYS},
             fundamental=fdata,
+            levels=levels,
         )
 
     def run(self, held_symbols: set[str] | None = None) -> list[Signal]:

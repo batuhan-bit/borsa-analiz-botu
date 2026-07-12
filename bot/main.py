@@ -64,6 +64,13 @@ def _print_summary(signals) -> None:
         reasons = "; ".join(sig.reasons) if sig.reasons else "-"
         print(f"  {sig.signal.value:9} {sig.symbol:6} [{sig.basket.value:15}] "
               f"skor={sig.score:.2f} ${sig.price:.2f}  {reasons}")
+        lv = sig.levels
+        if lv:
+            rr = f" R/R={lv['risk_reward']}" if lv.get("risk_reward") else ""
+            print(f"            🎯 stop=${lv['stop']} destek=${lv['support']} "
+                  f"hedef=${lv['target1']}→${lv['target2']}{rr}")
+        for note in sig.notes:
+            print(f"            {note}")
 
 
 def main() -> None:
