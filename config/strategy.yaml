@@ -57,7 +57,8 @@ technical:
     long: 200        # 50/200 altın çaprazı & ölüm çaprazı
   volume_confirmation:
     lookback_days: 20
-    min_multiplier: 1.5   # sinyal teyidi için hacim ortalamanın 1.5 katı
+    min_multiplier: 1.5      # sinyal teyidi için hacim ortalamanın 1.5 katı
+    direction_weight: 0.3    # yönlü hacim (toplama/dağıtım) skor ağırlığı (0 = kapalı)
   # Trend filtresi: fiyatın hareketli ortalamalara göre konumu. Fiyat MA'ların
   # altındaysa (kısa/orta vade düşüş) skor cezalandırılır — düşen bıçağı almayı
   # engeller. Değer büyüdükçe filtre sertleşir.
@@ -70,6 +71,9 @@ technical:
 signals:
   buy_threshold: 0.30
   sell_threshold: -0.30
+  # Risk/Ödül kapısı: BUY sinyalinin hedef1'e uzaklığı, stop'a uzaklığının en az
+  # bu katı olmalı. Altındaysa alım geçilir (HOLD) — risk/ödül disiplini.
+  min_risk_reward: 1.0
 
 # --- Temel analiz ---
 fundamental:

@@ -181,13 +181,22 @@ class SignalEngine:
 
         signal_type = self._decide(final)
 
-        # BUY için fiyat seviyeleri (stop/destek/hedef)
+        # BUY için fiyat seviyeleri (stop/destek/hedef) + R/R kapısı
         levels: dict[str, Any] = {}
         if signal_type is SignalType.BUY:
             from .levels import price_levels
             levels = price_levels(
                 df, price, max_loss_pct=self._strategy.risk["position_stop_loss_pct"]
             )
+            min_rr = self._strategy.raw.get("signals", {}).get("min_risk_reward", 1.0)
+            rr = levels.get("risk_reward")
+            if rr is not None and rr < min_rr:
+                # Risk/ödül yetersiz — alımı geç (HOLD), seviyeleri gösterme
+                signal_type = SignalType.HOLD
+                reasons = reasons + [
+                    f"R/R {rr:g} < {min_rr:g} (risk/ödül yetersiz — alım geçildi)"
+                ]
+                levels = {}
 
         return Signal(
             symbol=symbol,

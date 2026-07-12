@@ -34,17 +34,25 @@ def price_levels(df: pd.DataFrame, entry_price: float, *, max_loss_pct: float = 
         return {}
 
     atr = _atr(df)
-    support = float(df["low"].tail(20).min())
-    resistance = float(df["high"].tail(60).max())
+    twenty_low = float(df["low"].tail(20).min())
+    twenty_high = float(df["high"].tail(20).max())
+    sixty_high = float(df["high"].tail(60).max())
+    support, resistance = twenty_low, sixty_high
 
-    # Stop: desteğin biraz altı, ama %max_loss'tan fazla riske girme
-    floor_by_pct = entry_price * (1 - max_loss_pct / 100.0)
-    technical_stop = support - 0.5 * atr if atr else support
-    stop = max(technical_stop, floor_by_pct)   # ikisinden girişe yakın olanı (daha az risk)
+    # Stop: destek-temelli (20g dip altı) ve ATR-temelli (2 ATR altı) stopların
+    # DAHA SIKI olanı — momentum hisselerinde 20g dip çok uzak kalırsa ATR devreye
+    # girer. Hiçbir durumda %max_loss'tan fazla risk alınmaz.
+    support_stop = twenty_low - 0.5 * atr if atr else twenty_low
+    atr_stop = entry_price - 2 * atr if atr else twenty_low
+    stop = max(support_stop, atr_stop)
+    stop = max(stop, entry_price * (1 - max_loss_pct / 100.0))   # %max_loss tavanı
+    stop = min(stop, entry_price * 0.999)                        # stop mutlaka girişin altında
 
-    # Hedef1: 3 ATR projeksiyon (ara hedef). Hedef2: yakın direnç (yoksa 5 ATR).
-    target1 = entry_price + 3 * atr if atr else resistance
-    target2 = resistance if resistance > target1 else (entry_price + 5 * atr if atr else resistance)
+    # Hedefler: yakın direnç veya ATR projeksiyonu (hangisi yukarıdaysa)
+    target1 = max(twenty_high, entry_price + 2 * atr) if atr else twenty_high
+    target2 = max(sixty_high, entry_price + 4 * atr) if atr else sixty_high
+    if target2 <= target1:
+        target2 = target1 + (2 * atr if atr else target1 * 0.02)
 
     risk = entry_price - stop
     reward = target1 - entry_price

@@ -40,7 +40,16 @@ def indicator_frame(df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
         window_fast=macd_cfg["fast"],
         window_sign=macd_cfg["signal"],
     )
-    vol_avg = volume.rolling(cfg["volume_confirmation"]["lookback_days"]).mean()
+    lookback = cfg["volume_confirmation"]["lookback_days"]
+    vol_avg = volume.rolling(lookback).mean()
+
+    # Yönlü hacim (toplama/dağıtım): son `lookback` günde hacmin ne kadarı
+    # yükseliş günlerinde (fiyat arttı) vs düşüş günlerinde gerçekleşti.
+    # (Σ yön·hacim) / (Σ hacim) ∈ [-1, 1]; +1 = tüm hacim yükselişte (toplama),
+    # -1 = tüm hacim düşüşte (dağıtım). "Hacim hareketi teyit ediyor mu" sorusu.
+    delta = close.diff()
+    direction = (delta > 0).astype(int) - (delta < 0).astype(int)
+    signed_vol = direction * volume
 
     frame = pd.DataFrame(index=df.index)
     frame["close"] = close
@@ -50,6 +59,7 @@ def indicator_frame(df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
     frame["ma_short"] = close.rolling(ma_cfg["short"]).mean()
     frame["ma_long"] = close.rolling(ma_cfg["long"]).mean()
     frame["volume_ratio"] = volume / vol_avg
+    frame["vol_direction"] = signed_vol.rolling(lookback).sum() / volume.rolling(lookback).sum()
     return frame
 
 
@@ -86,6 +96,7 @@ def indicators_from_rows(now: Any, prev: Any, *, n_bars: Optional[int] = None) -
         "ma_long": g(now, "ma_long"),
         "ma_long_prev": g(prev, "ma_long"),
         "volume_ratio": g(now, "volume_ratio"),
+        "vol_direction": g(now, "vol_direction"),
         "n_bars": n_bars,
     }
 
@@ -175,12 +186,24 @@ def technical_score(indicators: dict[str, Any], cfg: dict[str, Any]) -> tuple[fl
     if price is not None and short is not None:
         components.append(w_short if price >= short else -w_short)
 
+    # --- Yönlü hacim (toplama/dağıtım): hacim fiyat hareketini teyit ediyor mu? ---
+    # Ağırlık>0 ise skoru etkiler; her hâlükârda belirgin durumu gerekçe olarak gösterir.
+    vd = indicators.get("vol_direction")
+    if vd is not None:
+        w_vd = cfg["volume_confirmation"].get("direction_weight", 0.3)
+        if w_vd > 0:
+            components.append(clip(vd, -1, 1) * w_vd)
+        if vd <= -0.3:
+            reasons.append("Hacim düşüş günlerinde ağır (dağıtım — olumsuz)")
+        elif vd >= 0.3:
+            reasons.append("Hacim yükseliş günlerinde ağır (toplama — olumlu)")
+
     if not components:
         return 0.0, reasons
 
     score = sum(components) / len(components)
 
-    # --- Hacim teyidi: yüksek hacim sinyali güçlendirir, düşük hacim zayıflatır ---
+    # --- Hacim büyüklüğü teyidi: yüksek hacim sinyali güçlendirir (yönden bağımsız) ---
     vr = indicators.get("volume_ratio")
     min_mult = cfg["volume_confirmation"]["min_multiplier"]
     if vr is not None:

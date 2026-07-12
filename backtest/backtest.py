@@ -34,6 +34,7 @@ from bot.config import ROOT, Settings
 from bot.data import YFinanceClient
 from bot.models import Basket
 from bot.risk.risk_manager import check_stop_loss
+from bot.signals.levels import price_levels
 from bot.signals.technical import indicator_frame, indicators_from_rows, technical_score
 
 log = logging.getLogger("backtest")
@@ -60,18 +61,29 @@ def _load_bars(symbol: str, years: float) -> pd.DataFrame:
     return df
 
 
-def _build_signal_frame(df: pd.DataFrame, tech_cfg: dict, buy: float, sell: float) -> pd.DataFrame:
-    """Her gün için (close, score, decision) üret — canlı skorlama mantığıyla."""
+def _build_signal_frame(
+    df: pd.DataFrame, tech_cfg: dict, buy: float, sell: float,
+    *, min_rr: float = 0.0, max_loss_pct: float = 20.0,
+) -> pd.DataFrame:
+    """Her gün için (close, score, decision) üret — canlı skorlama mantığıyla.
+
+    min_rr > 0 ise BUY günlerinde R/R kapısı uygulanır (canlı motorla tutarlı).
+    """
     frame = indicator_frame(df, tech_cfg)
     if frame.empty:
         return pd.DataFrame()
 
     rows = []
     prev = None
-    for _, row in frame.iterrows():
+    for i, (_, row) in enumerate(frame.iterrows()):
         ind = indicators_from_rows(row, prev)
         score, _ = technical_score(ind, tech_cfg)
         decision = "BUY" if score >= buy else "SELL" if score <= sell else "HOLD"
+        if decision == "BUY" and min_rr > 0 and i >= 20:
+            lv = price_levels(df.iloc[: i + 1], float(row["close"]), max_loss_pct=max_loss_pct)
+            rr = lv.get("risk_reward")
+            if rr is not None and rr < min_rr:
+                decision = "HOLD"
         rows.append((row["close"], score, decision))
         prev = row
     return pd.DataFrame(rows, index=frame.index, columns=["close", "score", "decision"])
@@ -134,6 +146,7 @@ def run_backtest(
     stop_loss_pct = strat.risk["position_stop_loss_pct"]
     buy = strat.raw.get("signals", {}).get("buy_threshold", 0.30)
     sell = strat.raw.get("signals", {}).get("sell_threshold", -0.30)
+    min_rr = strat.raw.get("signals", {}).get("min_risk_reward", 0.0)
     positions_per_basket = strat.portfolio["positions_per_basket"]
 
     # Sembol -> sepet ve sepet başına pozisyon büyüklüğü oranı
@@ -158,7 +171,8 @@ def run_backtest(
             if df.empty or len(df) < tech_cfg["moving_averages"]["long"] + 5:
                 log.warning("Yetersiz veri, atlanıyor: %s", sym)
                 continue
-            sf = _build_signal_frame(df, tech_cfg, buy, sell)
+            sf = _build_signal_frame(df, tech_cfg, buy, sell,
+                                     min_rr=min_rr, max_loss_pct=stop_loss_pct)
             if not sf.empty:
                 sig_frames[sym] = sf
     if verbose:
