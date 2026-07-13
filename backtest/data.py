@@ -17,16 +17,27 @@ BARS_CACHE_DIR = ROOT / "data_cache" / "backtest_bars"
 CACHE_TTL_SECONDS = 24 * 3600
 
 
-def load_bars(symbol: str, *, years: float = 3.0) -> pd.DataFrame:
-    """Sembol için günlük barları döndür (24 saat disk cache'li)."""
+def load_bars(
+    symbol: str,
+    *,
+    years: float = 3.0,
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
+    """Sembol için günlük barları döndür (24 saat disk cache'li).
+
+    start/end (YYYY-MM-DD) verilirse o aralık çekilir (Görev 1.2); cache
+    anahtarı döneme bağlıdır, farklı dönemler ayrı dosyalarda saklanır.
+    """
     BARS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = BARS_CACHE_DIR / f"{symbol}_{years:g}y.pkl"
+    period_key = f"{start}_{end}" if start or end else f"{years:g}y"
+    cache_path = BARS_CACHE_DIR / f"{symbol}_{period_key}.pkl"
     if cache_path.exists() and (time.time() - cache_path.stat().st_mtime) < CACHE_TTL_SECONDS:
         try:
             return pickle.loads(cache_path.read_bytes())
         except Exception:  # noqa: BLE001
             pass
-    df = YFinanceClient().get_daily_bars(symbol, years=years)
+    df = YFinanceClient().get_daily_bars(symbol, years=years, start=start, end=end)
     if not df.empty:
         cache_path.write_bytes(pickle.dumps(df))
     return df

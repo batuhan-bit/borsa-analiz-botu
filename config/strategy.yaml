@@ -102,3 +102,20 @@ notification:
 backtest:
   lookback_years: 3
   initial_capital: 3000
+  # Tarih aralığı (Görev 1.2). null = varsayılan davranış (son lookback_years yıl).
+  # CLI --start/--end bu değerleri ezer.
+  start_date: null            # ör. "2016-01-01"
+  end_date: null              # ör. "2022-12-31"
+  # Dönem başından önce gösterge ısınması (MA200 vb.) için çekilen ekstra gün.
+  warmup_days: 400
+  # Rejim bazlı alt-rapor pencereleri (ayı piyasası testleri)
+  regime_windows:
+    - name: "2018 Q4 düzeltmesi"
+      start: "2018-10-01"
+      end: "2018-12-31"
+    - name: "Mart 2020 çöküşü"
+      start: "2020-02-01"
+      end: "2020-04-30"
+    - name: "2022 ayı piyasası"
+      start: "2022-01-01"
+      end: "2022-12-31"

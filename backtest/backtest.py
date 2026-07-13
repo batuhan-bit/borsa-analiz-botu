@@ -109,20 +109,56 @@ class BacktestResult:
     benchmark_return_pct: Optional[float] = None
     sharpe: float = 0.0
     calmar: Optional[float] = None
+    label: str = "Strateji"
+    coverage: dict = field(default_factory=dict, repr=False)
     equity_curve: pd.Series = field(default=None, repr=False)
     trades: list[Trade] = field(default_factory=list, repr=False)
+
+
+def _resolve_window(strat, start: Optional[str], end: Optional[str]):
+    """Backtest penceresini çöz (Görev 1.2).
+
+    Dönüş: (range_mode, start_ts, end_ts, fetch_start).
+    start/end argümanları config'teki backtest.start_date/end_date'i ezer;
+    hiçbiri yoksa range_mode=False (eski davranış: son lookback_years yıl).
+    """
+    bt = strat.backtest
+    start = start or bt.get("start_date")
+    end = end or bt.get("end_date")
+    if not start and not end:
+        return False, None, None, None
+    years = bt["lookback_years"]
+    end_ts = pd.Timestamp(end) if end else pd.Timestamp(pd.Timestamp.today().date())
+    start_ts = pd.Timestamp(start) if start else end_ts - pd.Timedelta(days=int(years * 365))
+    warmup = int(bt.get("warmup_days", 400))
+    fetch_start = start_ts - pd.Timedelta(days=warmup)
+    return True, start_ts, end_ts, fetch_start
 
 
 def run_backtest(
     settings: Optional[Settings] = None,
     *,
     basket_limit: Optional[int] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    disable_trend_filter: bool = False,
+    disable_volume_direction: bool = False,
+    disable_rr_gate: bool = False,
+    label: str = "Strateji",
     verbose: bool = True,
 ) -> BacktestResult:
-    """Backtest çalıştır ve özet metrikleri döndür."""
+    """Backtest çalıştır ve özet metrikleri döndür.
+
+    start/end (YYYY-MM-DD): dönem sınırları (Görev 1.2). Verilirse göstergeler
+    dönem başından warmup_days önce başlayan veriyle ısıtılır, işlem yalnızca
+    pencere içinde yapılır. disable_* anahtarları koruyucu özellikleri geçici
+    kapatır (konfigürasyon varyantları için — strategy.yaml'a DOKUNMAZ).
+    """
+    import copy
+
     settings = settings or Settings.load(strict=False)
     strat = settings.strategy
-    tech_cfg = strat.technical
+    tech_cfg = copy.deepcopy(strat.technical)
     years = strat.backtest["lookback_years"]
     initial = float(strat.backtest["initial_capital"])
     stop_loss_pct = strat.risk["position_stop_loss_pct"]
@@ -130,6 +166,15 @@ def run_backtest(
     sell = strat.raw.get("signals", {}).get("sell_threshold", -0.30)
     min_rr = strat.raw.get("signals", {}).get("min_risk_reward", 0.0)
     positions_per_basket = strat.portfolio["positions_per_basket"]
+
+    if disable_trend_filter:
+        tech_cfg["trend_filter"] = {"price_vs_ma_long": 0.0, "price_vs_ma_short": 0.0}
+    if disable_volume_direction:
+        tech_cfg["volume_confirmation"]["direction_weight"] = 0.0
+    if disable_rr_gate:
+        min_rr = 0.0
+
+    range_mode, start_ts, end_ts, fetch_start = _resolve_window(strat, start, end)
 
     # Sembol -> sepet ve sepet başına pozisyon büyüklüğü oranı
     symbol_basket: dict[str, Basket] = {}
@@ -145,23 +190,61 @@ def run_backtest(
         for s in syms:
             symbol_basket[s] = basket
 
-    # Her sembol için sinyal çerçevesi (veri yoksa atla)
+    # Her sembol için sinyal çerçevesi (veri yoksa atla). Politika (Görev 1.2):
+    # verisi dönemin ortasında başlayan sembol, verisi başladığı gün evrene
+    # katılır; öncesinde yok sayılır. Kapsam raporu sepet bazında tutulur.
     sig_frames: dict[str, pd.DataFrame] = {}
+    first_bar: dict[str, pd.Timestamp] = {}
+    skipped: dict[Basket, list[str]] = {b: [] for b in universe}
     for basket, syms in universe.items():
         for sym in syms:
-            df = load_bars(sym, years=years)
+            if range_mode:
+                df = load_bars(sym, start=str(fetch_start.date()), end=str(end_ts.date()))
+            else:
+                df = load_bars(sym, years=years)
             if df.empty or len(df) < tech_cfg["moving_averages"]["long"] + 5:
                 log.warning("Yetersiz veri, atlanıyor: %s", sym)
+                skipped[basket].append(sym)
                 continue
             sf = _build_signal_frame(df, tech_cfg, buy, sell,
                                      min_rr=min_rr, max_loss_pct=stop_loss_pct)
             if not sf.empty:
                 sig_frames[sym] = sf
+                first_bar[sym] = df.index[0]
+            else:
+                skipped[basket].append(sym)
     if verbose:
         log.info("%d sembol yüklendi.", len(sig_frames))
+    if not sig_frames:
+        raise RuntimeError("Hiçbir sembol için veri yüklenemedi — dönem/ağ kontrol edin.")
 
-    # Ana takvim = tüm sembollerin tarih birleşimi
+    # Ana takvim = tüm sembollerin tarih birleşimi; range modunda pencereyle sınırlı
     all_dates = sorted(set().union(*[set(sf.index) for sf in sig_frames.values()]))
+    if range_mode:
+        all_dates = [d for d in all_dates if start_ts <= d <= end_ts]
+    if not all_dates:
+        raise RuntimeError("Seçilen pencerede işlem günü yok.")
+
+    # Kapsam raporu: dönem başında kaç sembol aktifti, kim sonradan katıldı
+    window_start = all_dates[0]
+    coverage: dict[str, dict] = {}
+    for basket, syms in universe.items():
+        active, late = [], {}
+        for sym in syms:
+            fb = first_bar.get(sym)
+            if fb is None:
+                continue
+            if fb <= window_start + pd.Timedelta(days=10):
+                active.append(sym)
+            else:
+                join = next((d for d in sig_frames[sym].index if d >= window_start), None)
+                late[sym] = str(pd.Timestamp(join).date()) if join is not None else "-"
+        coverage[basket.value] = {
+            "total": len(syms),
+            "active_at_start": len(active),
+            "late_joiners": late,
+            "no_data": skipped[basket],
+        }
 
     positions: dict[str, Position] = {}
     cash = initial
@@ -250,7 +333,10 @@ def run_backtest(
 
     equity_curve = pd.Series(equity_vals, index=equity_dates, name="equity")
     target = float(strat.portfolio["target_return_pct"])
-    return _metrics(equity_curve, trades, initial, years, sig_frames, target=target)
+    result = _metrics(equity_curve, trades, initial, years, sig_frames, target=target)
+    result.label = label
+    result.coverage = coverage
+    return result
 
 
 def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: float,
@@ -265,11 +351,13 @@ def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: floa
     wins = [t for t in closed if t.pnl > 0]
     win_rate = (len(wins) / len(closed) * 100.0) if closed else 0.0
 
-    # Benchmark: SPY al-tut (varsa)
+    # Benchmark: SPY al-tut (varsa) — stratejinin işlem penceresiyle sınırlı
     benchmark = None
     spy = sig_frames.get("SPY")
-    if spy is not None and len(spy) > 1:
-        benchmark = (spy["close"].iloc[-1] / spy["close"].iloc[0] - 1) * 100.0
+    if spy is not None and len(spy) > 1 and not equity.empty:
+        spy_close = spy["close"].loc[equity.index[0]: equity.index[-1]]
+        if len(spy_close) > 1:
+            benchmark = (spy_close.iloc[-1] / spy_close.iloc[0] - 1) * 100.0
 
     return BacktestResult(
         initial_capital=initial,
@@ -316,6 +404,22 @@ def _print_report(r: BacktestResult) -> None:
     print("=" * 56 + "\n")
 
 
+def _print_coverage(r: BacktestResult) -> None:
+    """Sepet bazında kapsam raporu (Görev 1.2): dönem başında kaç sembol aktifti."""
+    if not r.coverage:
+        return
+    print("  KAPSAM RAPORU (dönem başında aktif sembol / evren)")
+    for basket, cov in r.coverage.items():
+        print(f"  - {basket:16s}: {cov['active_at_start']}/{cov['total']} aktif", end="")
+        if cov["late_joiners"]:
+            joins = ", ".join(f"{s} ({d})" for s, d in sorted(cov["late_joiners"].items()))
+            print(f"; sonradan katılan: {joins}", end="")
+        if cov["no_data"]:
+            print(f"; verisi yok: {', '.join(cov['no_data'])}", end="")
+        print()
+    print()
+
+
 def comparison_rows(r: BacktestResult, benchmarks: list[BenchmarkResult]) -> list[dict]:
     """Strateji + kıyas çizgilerini tek tablo satırları halinde döndür (Görev 1.1)."""
     rows = [{
@@ -354,14 +458,33 @@ def _print_comparison(r: BacktestResult, benchmarks: list[BenchmarkResult]) -> N
     print("  " + "-" * 78 + "\n")
 
 
-def run_benchmarks(settings: Settings, *, basket_limit: Optional[int] = None) -> list[BenchmarkResult]:
-    """Stratejiyle aynı dönem/veri için kıyas çizgilerini üret (Görev 1.1)."""
+def run_benchmarks(
+    settings: Settings,
+    *,
+    basket_limit: Optional[int] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> list[BenchmarkResult]:
+    """Stratejiyle aynı dönem/veri için kıyas çizgilerini üret (Görev 1.1).
+
+    Range modunda barlar stratejiyle AYNI cache anahtarıyla (warmup dahil)
+    yüklenir, sonra al-tut penceresine kırpılır — çifte indirme olmaz.
+    """
     strat = settings.strategy
     years = strat.backtest["lookback_years"]
     initial = float(strat.backtest["initial_capital"])
     symbols = {s for cfg in strat.baskets.values() for s in cfg.get("universe", [])}
     symbols.add("SPY")
-    bars = {sym: load_bars(sym, years=years) for sym in sorted(symbols)}
+
+    range_mode, start_ts, end_ts, fetch_start = _resolve_window(strat, start, end)
+    bars: dict[str, pd.DataFrame] = {}
+    for sym in sorted(symbols):
+        if range_mode:
+            df = load_bars(sym, start=str(fetch_start.date()), end=str(end_ts.date()))
+            df = df.loc[start_ts:end_ts] if not df.empty else df
+        else:
+            df = load_bars(sym, years=years)
+        bars[sym] = df
     return benchmark_suite(bars, strat.baskets, initial, basket_limit=basket_limit)
 
 
@@ -385,14 +508,34 @@ def main() -> None:
                         help="Her sepetten en fazla N sembol (hızlı deneme için)")
     parser.add_argument("--no-benchmark", action="store_true",
                         help="Al-ve-tut kıyas tablosunu atla")
+    parser.add_argument("--start", default=None, metavar="YYYY-MM-DD",
+                        help="Dönem başlangıcı (config backtest.start_date'i ezer)")
+    parser.add_argument("--end", default=None, metavar="YYYY-MM-DD",
+                        help="Dönem bitişi (config backtest.end_date'i ezer)")
+    parser.add_argument("--no-trend-filter", action="store_true",
+                        help="Trend filtresini kapat (varyant testi)")
+    parser.add_argument("--no-volume-direction", action="store_true",
+                        help="Yönlü hacim bileşenini kapat (varyant testi)")
+    parser.add_argument("--no-rr-gate", action="store_true",
+                        help="Risk/Ödül kapısını kapat (varyant testi)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     settings = Settings.load(strict=False)
-    result = run_backtest(settings, basket_limit=args.basket_limit)
+    result = run_backtest(
+        settings,
+        basket_limit=args.basket_limit,
+        start=args.start,
+        end=args.end,
+        disable_trend_filter=args.no_trend_filter,
+        disable_volume_direction=args.no_volume_direction,
+        disable_rr_gate=args.no_rr_gate,
+    )
     _print_report(result)
+    _print_coverage(result)
     if not args.no_benchmark:
-        benchmarks = run_benchmarks(settings, basket_limit=args.basket_limit)
+        benchmarks = run_benchmarks(settings, basket_limit=args.basket_limit,
+                                    start=args.start, end=args.end)
         _print_comparison(result, benchmarks)
     _save_results(result)
 
