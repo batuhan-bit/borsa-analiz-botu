@@ -82,19 +82,23 @@ def _attach_sizing(signals, settings, holdings_value: float, invested_cost: floa
             continue
         basket_cfg = baskets.get(sig.basket.value, {})
         alloc = basket_cfg.get("allocation_pct", 0)
-        suggestion = suggested_position(equity, sig.price, alloc, ppb, sizing_cfg)
+        suggestion = suggested_position(equity, sig.price, alloc, ppb, sizing_cfg,
+                                        free_cash=free_cash)
         if suggestion:
             sig.sizing = suggestion
 
 
 def _format_sizing(sz: dict) -> str:
     """Öneri sözlüğünü tek satırlık okunur metne çevir."""
+    capped = sz.get("cash_capped")
     if not sz.get("affordable"):
+        reason = "serbest nakit 1 hisseye yetmiyor" if capped else "1 hisse hedefi aşıyor"
         return (f"💰 Öneri: ~${sz['amount']:,.0f} hedef (%{sz['weight_pct']:g} ağırlık) — "
-                "1 hisse hedefi aşıyor, atlanabilir")
+                f"{reason}, atlanabilir")
     shares = sz["shares"]
     shares_txt = f"{shares:g}" if sz.get("fractional") else f"{int(shares)}"
-    return (f"💰 Öneri: ~${sz['amount']:,.0f} (%{sz['weight_pct']:g} ağırlık) → "
+    limit = " · serbest nakitle sınırlı" if capped else ""
+    return (f"💰 Öneri: ~${sz['amount']:,.0f} (%{sz['weight_pct']:g} ağırlık{limit}) → "
             f"{shares_txt} adet ≈ ${sz['cost']:,.0f}")
 
 

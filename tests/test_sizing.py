@@ -44,6 +44,40 @@ def test_suggested_position_not_affordable_whole_shares():
     assert s["affordable"] is False
 
 
+def test_suggested_position_cash_cap_limits_amount():
+    # hedef 1000$ ama serbest nakit 400$ -> öneri 400$'a çekilir (fiyat 100 -> 4 adet)
+    s = suggested_position(5000, 100.0, 40, 2, {"fractional_shares": False}, free_cash=400.0)
+    assert s["target_amount"] == pytest.approx(1000.0)
+    assert s["amount"] == pytest.approx(400.0)
+    assert s["shares"] == 4
+    assert s["cost"] == pytest.approx(400.0)
+    assert s["cash_capped"] is True
+    assert s["affordable"] is True
+
+
+def test_suggested_position_cash_above_target_no_cap():
+    # serbest nakit hedeften fazla -> sınır uygulanmaz, tam hedef önerilir
+    s = suggested_position(5000, 100.0, 40, 2, {"fractional_shares": False}, free_cash=5000.0)
+    assert s["amount"] == pytest.approx(1000.0)
+    assert s["shares"] == 10
+    assert s["cash_capped"] is False
+
+
+def test_suggested_position_cash_below_one_share_not_affordable():
+    # serbest nakit 50$, fiyat 100 -> 0 adet -> affordable False, cash_capped True
+    s = suggested_position(5000, 100.0, 40, 2, {"fractional_shares": False}, free_cash=50.0)
+    assert s["shares"] == 0
+    assert s["affordable"] is False
+    assert s["cash_capped"] is True
+
+
+def test_suggested_position_no_free_cash_unbounded():
+    # free_cash verilmezse (NAKİT satırı yok) eski davranış: sınır yok
+    s = suggested_position(5000, 100.0, 40, 2, {"fractional_shares": False})
+    assert s["amount"] == pytest.approx(1000.0)
+    assert s["cash_capped"] is False
+
+
 def test_suggested_position_guards():
     assert suggested_position(0, 100, 40, 2, {}) is None       # özsermaye yok
     assert suggested_position(5000, 0, 40, 2, {}) is None      # fiyat yok

@@ -63,14 +63,17 @@ def _format_signal_line(sig: Signal) -> str:
     # Önerilen tutar/adet (Sizing v2) — BUY için
     sz = sig.sizing
     if sz:
+        capped = sz.get("cash_capped")
         if not sz.get("affordable"):
+            reason = "serbest nakit 1 hisseye yetmiyor" if capped else "1 hisse hedefi aşıyor"
             line += (f"\n      💰 Öneri: ~${sz['amount']:,.0f} hedef "
-                     f"(%{sz['weight_pct']:g} ağırlık) — 1 hisse hedefi aşıyor")
+                     f"(%{sz['weight_pct']:g} ağırlık) — {reason}")
         else:
             shares = sz["shares"]
             shares_txt = f"{shares:g}" if sz.get("fractional") else f"{int(shares)}"
+            limit = " · serbest nakitle sınırlı" if capped else ""
             line += (f"\n      💰 Öneri: ~${sz['amount']:,.0f} (%{sz['weight_pct']:g} "
-                     f"ağırlık) → {shares_txt} adet ≈ ${sz['cost']:,.0f}")
+                     f"ağırlık{limit}) → {shares_txt} adet ≈ ${sz['cost']:,.0f}")
     return line
 
 

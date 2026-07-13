@@ -27,20 +27,36 @@ def suggested_position(
     allocation_pct: float,
     positions_per_basket: int,
     sizing_cfg: dict[str, Any] | None = None,
+    *,
+    free_cash: Optional[float] = None,
 ) -> Optional[dict]:
     """Bir BUY için önerilen dolar tutarı ve adet.
 
     equity: portföy özsermayesi (Sheets'ten türetilir). price: güncel fiyat.
-    Dönüş: {weight_pct, amount, shares, cost, fractional, affordable} veya
-    hesaplanamıyorsa None. `affordable=False` → tam adet modunda 1 hisse bile
-    hedef tutarı aşıyor (fiyat, hedef ağırlıktan pahalı).
+    free_cash: Sheets NAKİT satırından serbest nakit. Verilmişse öneri tutarı
+    `min(hedef ağırlık × özsermaye, serbest nakit)` ile sınırlanır — nakit satırı
+    varken elde olandan fazlası önerilmez. None (nakit satırı yok) → sınır uygulanmaz.
+
+    Dönüş: {weight_pct, amount, target_amount, shares, cost, fractional,
+    affordable, cash_capped} veya hesaplanamıyorsa None. `affordable=False` →
+    tam adet modunda 1 hisse bile önerilen tutarı aşıyor (fiyat pahalı ya da
+    serbest nakit 1 hisseye yetmiyor). `cash_capped=True` → öneri serbest nakde
+    çekildi (hedef ağırlık tutarından düşük).
     """
     sizing_cfg = sizing_cfg or {}
     if not equity or equity <= 0 or not price or price <= 0 or positions_per_basket <= 0:
         return None
 
     weight = target_weight(allocation_pct, positions_per_basket)
-    amount = weight * equity
+    target_amount = weight * equity
+    # NAKİT satırı varsa (free_cash biliniyorsa) öneri elde olan nakdi aşamaz.
+    if free_cash is not None:
+        cash = max(float(free_cash), 0.0)
+        amount = min(target_amount, cash)
+        cash_capped = cash < target_amount
+    else:
+        amount = target_amount
+        cash_capped = False
     fractional = bool(sizing_cfg.get("fractional_shares", False))
 
     if fractional:
@@ -54,10 +70,12 @@ def suggested_position(
     return {
         "weight_pct": round(weight * 100.0, 1),
         "amount": round(amount, 2),
+        "target_amount": round(target_amount, 2),
         "shares": shares,
         "cost": round(cost, 2),
         "fractional": fractional,
         "affordable": affordable,
+        "cash_capped": cash_capped,
     }
 
 
