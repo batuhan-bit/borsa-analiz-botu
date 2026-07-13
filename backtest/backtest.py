@@ -34,7 +34,14 @@ from bot.signals.technical import indicator_frame, indicators_from_rows, technic
 
 from .benchmark import BenchmarkResult, benchmark_suite
 from .data import load_bars
-from .metrics import cagr_pct, calmar_ratio, max_drawdown_pct, sharpe_ratio
+from .metrics import (
+    bootstrap_total_return_ci,
+    cagr_pct,
+    calmar_ratio,
+    ci_overlap,
+    max_drawdown_pct,
+    sharpe_ratio,
+)
 
 log = logging.getLogger("backtest")
 
@@ -109,6 +116,12 @@ class BacktestResult:
     benchmark_return_pct: Optional[float] = None
     sharpe: float = 0.0
     calmar: Optional[float] = None
+    # İstatistiksel dürüstlük (Görev 1.3)
+    num_closed_trades: int = 0
+    avg_trade_return_pct: Optional[float] = None
+    ci_low_pct: Optional[float] = None      # toplam getiri bootstrap GA alt sınırı
+    ci_high_pct: Optional[float] = None     # üst sınırı
+    ci_confidence: float = 0.90
     label: str = "Strateji"
     coverage: dict = field(default_factory=dict, repr=False)
     equity_curve: pd.Series = field(default=None, repr=False)
@@ -333,14 +346,21 @@ def run_backtest(
 
     equity_curve = pd.Series(equity_vals, index=equity_dates, name="equity")
     target = float(strat.portfolio["target_return_pct"])
-    result = _metrics(equity_curve, trades, initial, years, sig_frames, target=target)
+    boot_cfg = strat.backtest.get("bootstrap", {}) or {}
+    result = _metrics(
+        equity_curve, trades, initial, years, sig_frames, target=target,
+        bootstrap_samples=int(boot_cfg.get("samples", 10_000)),
+        bootstrap_confidence=float(boot_cfg.get("confidence", 0.90)),
+    )
     result.label = label
     result.coverage = coverage
     return result
 
 
 def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: float,
-             sig_frames: dict[str, pd.DataFrame], *, target: float = 6.5) -> BacktestResult:
+             sig_frames: dict[str, pd.DataFrame], *, target: float = 6.5,
+             bootstrap_samples: int = 10_000,
+             bootstrap_confidence: float = 0.90) -> BacktestResult:
     final = float(equity.iloc[-1]) if not equity.empty else initial
     total_return = (final / initial - 1) * 100.0
 
@@ -350,6 +370,13 @@ def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: floa
     closed = [t for t in trades if t.reason != "backtest_end"] or trades
     wins = [t for t in closed if t.pnl > 0]
     win_rate = (len(wins) / len(closed) * 100.0) if closed else 0.0
+
+    # Görev 1.3: işlem başına ortalama getiri + toplam getirinin bootstrap GA'sı
+    avg_trade = (sum(t.return_pct for t in closed) / len(closed)) if closed else None
+    ci = bootstrap_total_return_ci(
+        [t.pnl for t in closed], initial,
+        samples=bootstrap_samples, confidence=bootstrap_confidence,
+    )
 
     # Benchmark: SPY al-tut (varsa) — stratejinin işlem penceresiyle sınırlı
     benchmark = None
@@ -373,6 +400,11 @@ def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: floa
         benchmark_return_pct=round(benchmark, 2) if benchmark is not None else None,
         sharpe=round(sharpe_ratio(equity), 2),
         calmar=(lambda c: round(c, 2) if c is not None else None)(calmar_ratio(equity)),
+        num_closed_trades=len(closed),
+        avg_trade_return_pct=round(avg_trade, 2) if avg_trade is not None else None,
+        ci_low_pct=round(ci[0], 2) if ci else None,
+        ci_high_pct=round(ci[1], 2) if ci else None,
+        ci_confidence=bootstrap_confidence,
         equity_curve=equity,
         trades=trades,
     )
@@ -392,6 +424,15 @@ def _print_report(r: BacktestResult) -> None:
     if r.calmar is not None:
         print(f"  Calmar               : {r.calmar:.2f}")
     print(f"  Kazanma oranı        : %{r.win_rate_pct:.1f}  ({r.num_trades} işlem)")
+    # Görev 1.3: ham getiri asla işlem sayısı ve güven aralığı olmadan sunulmaz
+    if r.avg_trade_return_pct is not None:
+        print(f"  İşlem başına ort.    : %{r.avg_trade_return_pct:+.2f}  ({r.num_closed_trades} kapanmış işlem)")
+    if r.ci_low_pct is not None:
+        pct = int(r.ci_confidence * 100)
+        print(f"  Toplam getiri %{pct} GA : [%{r.ci_low_pct:+.2f} … %{r.ci_high_pct:+.2f}]"
+              f"  (bootstrap, işlem örneklemesi)")
+        if r.num_closed_trades < 30:
+            print(f"  ⚠ Örneklem küçük ({r.num_closed_trades} işlem) — sonuçlar gürültüye açık.")
     if r.benchmark_return_pct is not None:
         print(f"  Benchmark (SPY al-tut): %{r.benchmark_return_pct:+.2f}")
     # Hedef: 3 ayda %15. Gerçekleşen çeyreklik-eşdeğer getiri ile karşılaştır.
@@ -402,6 +443,21 @@ def _print_report(r: BacktestResult) -> None:
     verdict = "ULAŞILDI ✓" if realized_q >= target else "ULAŞILAMADI ✗"
     print(f"  Gerçekleşen çeyreklik getiri: %{realized_q:+.2f}  (hedef %{target:g}) → {verdict}")
     print("=" * 56 + "\n")
+
+
+def sample_noise_warning(a: BacktestResult, b: BacktestResult) -> Optional[str]:
+    """İki konfigürasyonun GA'ları çakışıyorsa uyarı metni döndür (Görev 1.3)."""
+    overlap = ci_overlap(
+        (a.ci_low_pct, a.ci_high_pct) if a.ci_low_pct is not None else None,
+        (b.ci_low_pct, b.ci_high_pct) if b.ci_low_pct is not None else None,
+    )
+    if overlap is None:
+        return (f"'{a.label}' vs '{b.label}': güven aralığı hesaplanamadı "
+                f"(yetersiz işlem sayısı) — fark yorumlanamaz.")
+    if overlap:
+        return (f"'{a.label}' vs '{b.label}': güven aralıkları çakışıyor — "
+                f"fark örneklem gürültüsünden ayırt edilemiyor.")
+    return None
 
 
 def _print_coverage(r: BacktestResult) -> None:

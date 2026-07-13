@@ -108,6 +108,11 @@ backtest:
   end_date: null              # ör. "2022-12-31"
   # Dönem başından önce gösterge ısınması (MA200 vb.) için çekilen ekstra gün.
   warmup_days: 400
+  # İstatistiksel dürüstlük (Görev 1.3): işlem PnL'lerinin yerine-koymalı
+  # bootstrap örneklemesiyle toplam getiri güven aralığı.
+  bootstrap:
+    samples: 10000
+    confidence: 0.90
   # Rejim bazlı alt-rapor pencereleri (ayı piyasası testleri)
   regime_windows:
     - name: "2018 Q4 düzeltmesi"
