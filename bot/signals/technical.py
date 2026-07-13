@@ -177,13 +177,15 @@ def technical_score(indicators: dict[str, Any], cfg: dict[str, Any]) -> tuple[fl
     tf = cfg.get("trend_filter", {})
     w_long = tf.get("price_vs_ma_long", 0.6)
     w_short = tf.get("price_vs_ma_short", 0.4)
-    if price is not None and long is not None:
+    # Ağırlık 0 ise bileşen hiç eklenmez (skoru sulandırmasın) — böylece
+    # trend filtresi config'ten/backtest varyantından tamamen kapatılabilir.
+    if price is not None and long is not None and w_long > 0:
         if price >= long:
             components.append(w_long)
         else:
             components.append(-w_long)
             reasons.append("Fiyat 200G ortalamanın altında (trend zayıf)")
-    if price is not None and short is not None:
+    if price is not None and short is not None and w_short > 0:
         components.append(w_short if price >= short else -w_short)
 
     # --- Yönlü hacim (toplama/dağıtım): hacim fiyat hareketini teyit ediyor mu? ---

@@ -16,18 +16,36 @@ log = logging.getLogger(__name__)
 
 
 class YFinanceClient:
-    def get_daily_bars(self, symbol: str, *, years: float = 3.0) -> pd.DataFrame:
-        """Sembol için günlük (temettü/split ayarlı) OHLCV geçmişini döndür."""
+    def get_daily_bars(
+        self,
+        symbol: str,
+        *,
+        years: float = 3.0,
+        start: date | str | None = None,
+        end: date | str | None = None,
+    ) -> pd.DataFrame:
+        """Sembol için günlük (temettü/split ayarlı) OHLCV geçmişini döndür.
+
+        start/end verilirse o tarih aralığı kullanılır (backtest'in 2016+
+        dönemleri için — Görev 1.2); verilmezse bugünden geriye `years` yıl.
+        """
         import yfinance as yf
 
-        end = date.today()
-        start = end - timedelta(days=int(years * 365) + 5)
+        if end is not None:
+            # yfinance'te end HARİÇTİR; istenen son günü kapsamak için +1 gün
+            fetch_end = pd.Timestamp(end).date() + timedelta(days=1)
+        else:
+            fetch_end = date.today()
+        if start is not None:
+            start = pd.Timestamp(start).date()
+        else:
+            start = fetch_end - timedelta(days=int(years * 365) + 5)
 
         try:
             ticker = yf.Ticker(symbol)
             raw = ticker.history(
                 start=start.isoformat(),
-                end=end.isoformat(),
+                end=fetch_end.isoformat(),
                 interval="1d",
                 auto_adjust=True,   # ayarlı OHLC (backtest için)
                 raise_errors=False,

@@ -42,6 +42,7 @@ class Signal:
     fundamental: dict[str, Any] = field(default_factory=dict)
     levels: dict[str, Any] = field(default_factory=dict)      # BUY için stop/destek/hedef
     notes: list[str] = field(default_factory=list)            # önemli uyarılar (ayrı iletilir)
+    sizing: dict[str, Any] = field(default_factory=dict)      # BUY için önerilen tutar/adet (v2)
     generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_row(self) -> list[Any]:
