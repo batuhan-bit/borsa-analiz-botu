@@ -61,19 +61,21 @@ def _stop_loss_signals(positions, engine, stop_loss_pct):
     return stop_signals, holdings_value, len(positions), invested_cost
 
 
-def _attach_sizing(signals, settings, holdings_value: float, invested_cost: float) -> None:
+def _attach_sizing(signals, settings, holdings_value: float, invested_cost: float,
+                   free_cash=None) -> None:
     """BUY sinyallerine Sheets özsermayesinden 'önerilen tutar/adet' ekle.
 
-    Özsermaye = güncel pozisyon değeri + tahmini serbest nakit (budget_max
-    çıpalı — bkz. sizing.portfolio_equity). v2 kuralı: hedef ağırlık ×
-    özsermaye; fractional_shares config'ine saygılı.
+    Özsermaye = güncel pozisyon değeri + serbest nakit. free_cash Sheets'teki
+    NAKİT satırından gelirse kesin; yoksa budget_max çıpalı tahmin (bkz.
+    sizing.portfolio_equity). v2 kuralı: hedef ağırlık × özsermaye;
+    fractional_shares config'ine saygılı.
     """
     portfolio = settings.strategy.portfolio
     baskets = settings.strategy.baskets
     sizing_cfg = portfolio.get("sizing", {}) or {}
     budget_max = portfolio.get("budget_max", 0)
     ppb = int(portfolio.get("positions_per_basket", 1))
-    equity = portfolio_equity(holdings_value, invested_cost, budget_max)
+    equity = portfolio_equity(holdings_value, invested_cost, budget_max, free_cash)
 
     for sig in signals:
         if sig.signal is not SignalType.BUY:
@@ -145,8 +147,10 @@ def main() -> None:
     signals = stop_signals + signals
     log.info("%d sinyal (%d stop-loss dahil).", len(signals), len(stop_signals))
 
-    # 3b. BUY sinyallerine önerilen tutar/adet ekle (Sizing v2, ayrı iş)
-    _attach_sizing(signals, settings, portfolio_value, invested_cost)
+    # 3b. BUY sinyallerine önerilen tutar/adet ekle (Sizing v2, ayrı iş).
+    #     Serbest nakit Sheets 'Pozisyonlar' sekmesindeki NAKİT satırından okunur.
+    free_cash = logger.get_free_cash()
+    _attach_sizing(signals, settings, portfolio_value, invested_cost, free_cash)
 
     # 4. Sheets loglama + performans
     logger.log_signals(signals)

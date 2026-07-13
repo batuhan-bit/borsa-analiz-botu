@@ -2,7 +2,10 @@
 
 Üç sekme yönetilir:
   - Sinyaller  : bot'un ürettiği her sinyal (bot yazar)
-  - Pozisyonlar: açık pozisyonlar (kullanıcı manuel doldurur; bot stop-loss için okur)
+  - Pozisyonlar: açık pozisyonlar (kullanıcı manuel doldurur; bot stop-loss için
+    okur). Serbest nakit ayrı bir satırla girilir: Sembol=NAKİT/CASH, tutar
+    "Giriş Fiyatı" sütununda. Bu satır pozisyon sayılmaz; canlı sizing önerisinde
+    özsermaye = pozisyon değeri + serbest nakit olarak kullanılır.
   - Performans : günlük portföy anlık görüntüsü (bot yazar)
 
 Kimlik doğrulama: lokalde service_account.json dosyası, GitHub Actions'ta
@@ -25,6 +28,12 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 SIGNAL_HEADERS = ["Zaman", "Sembol", "Sepet", "Sinyal", "Skor", "Fiyat", "Gerekçeler"]
 POSITION_HEADERS = ["Sembol", "Sepet", "Giriş Tarihi", "Giriş Fiyatı", "Adet", "Durum"]
+
+# "Pozisyonlar" sekmesinde serbest nakit özel bir satırla girilir: Sembol
+# hücresine NAKİT/CASH yaz, tutarı "Giriş Fiyatı" (yoksa "Adet") sütununa koy.
+# Bu satır pozisyon sayılmaz; canlı sizing önerisinde özsermaye = pozisyon
+# değeri + serbest nakit olarak kullanılır.
+CASH_MARKERS = {"NAKİT", "NAKIT", "CASH", "NAKIT $", "NAKİT $"}
 PERFORMANCE_HEADERS = [
     "Tarih", "Portföy Değeri", "Açık Pozisyon", "Üretilen Sinyal", "Alış", "Satış", "Stop-Loss",
 ]
@@ -37,6 +46,54 @@ def _to_float(value: Any) -> Optional[float]:
         return float(str(value).replace(",", "."))
     except (TypeError, ValueError):
         return None
+
+
+def _is_cash_row(symbol: str) -> bool:
+    return symbol.strip().upper() in CASH_MARKERS
+
+
+def parse_open_positions(records: list[dict]) -> list[dict]:
+    """Sheets 'Pozisyonlar' kayıtlarını açık pozisyon sözlüklerine çevir (saf).
+
+    KAPALI/CLOSED satırları ve serbest nakit satırı (Sembol=NAKİT/CASH) atlanır.
+    Ağdan bağımsız test edilebilsin diye modül düzeyinde tutulur.
+    """
+    positions = []
+    for r in records:
+        symbol = str(r.get("Sembol", "")).strip().upper()
+        if not symbol or _is_cash_row(symbol):
+            continue
+        status = str(r.get("Durum", "")).strip().upper()
+        if status in ("KAPALI", "CLOSED"):
+            continue
+        positions.append({
+            "symbol": symbol,
+            "basket": str(r.get("Sepet", "")).strip(),
+            "entry_date": r.get("Giriş Tarihi"),
+            "entry_price": _to_float(r.get("Giriş Fiyatı")),
+            "shares": _to_float(r.get("Adet")),
+            "status": status or "OPEN",
+        })
+    return positions
+
+
+def parse_free_cash(records: list[dict]) -> Optional[float]:
+    """Serbest nakit satırlarının toplamı (Sembol=NAKİT/CASH). Yoksa None.
+
+    Tutar "Giriş Fiyatı" sütunundan (yoksa "Adet") okunur; birden çok nakit
+    satırı toplanır.
+    """
+    total = None
+    for r in records:
+        symbol = str(r.get("Sembol", "")).strip().upper()
+        if not _is_cash_row(symbol):
+            continue
+        amount = _to_float(r.get("Giriş Fiyatı"))
+        if amount is None:
+            amount = _to_float(r.get("Adet"))
+        if amount is not None:
+            total = (total or 0.0) + amount
+    return total
 
 
 class SheetsLogger:
@@ -116,28 +173,24 @@ class SheetsLogger:
     def get_open_positions(self) -> list[dict]:
         """'Pozisyonlar' sekmesinden açık pozisyonları oku (stop-loss için).
 
-        'Durum' sütunu KAPALI/CLOSED olmayan satırlar açık kabul edilir.
+        'Durum' sütunu KAPALI/CLOSED olmayan satırlar açık kabul edilir; serbest
+        nakit satırı (Sembol=NAKİT/CASH) pozisyon sayılmaz.
         """
         ws = self._worksheet("Pozisyonlar", POSITION_HEADERS)
         if ws is None:
             return []
-        positions = []
-        for r in ws.get_all_records():
-            status = str(r.get("Durum", "")).strip().upper()
-            if status in ("KAPALI", "CLOSED"):
-                continue
-            symbol = str(r.get("Sembol", "")).strip().upper()
-            if not symbol:
-                continue
-            positions.append({
-                "symbol": symbol,
-                "basket": str(r.get("Sepet", "")).strip(),
-                "entry_date": r.get("Giriş Tarihi"),
-                "entry_price": _to_float(r.get("Giriş Fiyatı")),
-                "shares": _to_float(r.get("Adet")),
-                "status": status or "OPEN",
-            })
-        return positions
+        return parse_open_positions(ws.get_all_records())
+
+    def get_free_cash(self) -> Optional[float]:
+        """'Pozisyonlar' sekmesindeki serbest nakit satır(lar)ından nakit oku.
+
+        Sembol=NAKİT/CASH olan satırın tutarı. Yoksa None (canlı sizing önerisi
+        o zaman budget_max çıpalı tahmine düşer). Sheets devre dışıysa None.
+        """
+        ws = self._worksheet("Pozisyonlar", POSITION_HEADERS)
+        if ws is None:
+            return None
+        return parse_free_cash(ws.get_all_records())
 
     def log_performance(self, snapshot: dict) -> None:
         """Günlük portföy performans anlık görüntüsünü 'Performans' sekmesine ekle."""

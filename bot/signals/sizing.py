@@ -61,14 +61,24 @@ def suggested_position(
     }
 
 
-def portfolio_equity(holdings_value: float, invested_cost: float, budget_max: float) -> float:
-    """Sheets verisinden portföy özsermayesi tahmini.
+def portfolio_equity(
+    holdings_value: float,
+    invested_cost: float,
+    budget_max: float,
+    free_cash: Optional[float] = None,
+) -> float:
+    """Sheets verisinden portföy özsermayesi.
 
-    Sheets yalnız açık pozisyonların değerini bilir; serbest nakit ayrı
-    tutulmaz. Toplam sermaye çıpası olarak config'teki `budget_max` alınır:
+    free_cash verilmişse (Pozisyonlar sekmesindeki NAKİT satırından) özsermaye
+    KESİN hesaplanır: pozisyon değeri + serbest nakit.
+
+    free_cash yoksa (nakit satırı girilmemişse) çıpalı tahmine düşülür: toplam
+    sermaye ≈ config'teki `budget_max`, dolayısıyla
       özsermaye ≈ (güncel pozisyon değeri) + max(budget_max − yatırılan maliyet, 0)
-    Pozisyon yokken özsermaye = budget_max; portföy büyürse (holdings > çıpa)
-    büyümeyi yansıtır. Öneri bağlayıcı değil, bu yaklaşım kabul edilebilir.
+    Pozisyon yokken = budget_max; portföy çıpayı aşarsa büyümeyi yansıtır.
+    Öneri bağlayıcı değil, bu tahmin kabul edilebilir.
     """
+    if free_cash is not None:
+        return float(holdings_value) + float(free_cash)
     cash_est = max(float(budget_max) - float(invested_cost), 0.0)
     return float(holdings_value) + cash_est
