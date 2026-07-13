@@ -157,6 +157,9 @@ def run_backtest(
     disable_trend_filter: bool = False,
     disable_volume_direction: bool = False,
     disable_rr_gate: bool = False,
+    sizing_mode: Optional[str] = None,
+    fill_mode: Optional[str] = None,
+    apply_costs: Optional[bool] = None,
     label: str = "Strateji",
     verbose: bool = True,
 ) -> BacktestResult:
@@ -166,6 +169,10 @@ def run_backtest(
     dönem başından warmup_days önce başlayan veriyle ısıtılır, işlem yalnızca
     pencere içinde yapılır. disable_* anahtarları koruyucu özellikleri geçici
     kapatır (konfigürasyon varyantları için — strategy.yaml'a DOKUNMAZ).
+
+    sizing_mode ("legacy"/"v2"), fill_mode ("close"/"next_open") ve apply_costs
+    verilmezse config'ten okunur; verilirse config'i EZER (rapor, aynı stratejiyi
+    hem v2+maliyetli hem legacy+maliyetsiz koşabilsin diye — Görev 2.1/2.2).
     """
     import copy
 
@@ -179,6 +186,22 @@ def run_backtest(
     sell = strat.raw.get("signals", {}).get("sell_threshold", -0.30)
     min_rr = strat.raw.get("signals", {}).get("min_risk_reward", 0.0)
     positions_per_basket = strat.portfolio["positions_per_basket"]
+
+    # --- Sizing v2 (Görev 2.2) + gerçekçilik (Görev 2.1) parametreleri ---
+    sizing_cfg = strat.portfolio.get("sizing", {}) or {}
+    sizing_mode = (sizing_mode or sizing_cfg.get("mode", "legacy")).lower()
+    deployment_pct = float(sizing_cfg.get("deployment_pct", 100.0))
+    min_fill_pct = float(sizing_cfg.get("min_fill_pct", 0.0))
+    fractional_shares = bool(sizing_cfg.get("fractional_shares", False))
+
+    bt_cfg = strat.backtest
+    fill_mode = (fill_mode or bt_cfg.get("fill", "close")).lower()
+    if apply_costs is None:
+        cost_bps = float(bt_cfg.get("commission_bps", 0.0)) + float(bt_cfg.get("slippage_bps", 0.0))
+    else:
+        cost_bps = (float(bt_cfg.get("commission_bps", 0.0))
+                    + float(bt_cfg.get("slippage_bps", 0.0))) if apply_costs else 0.0
+    cost_frac = cost_bps / 10_000.0
 
     if disable_trend_filter:
         tech_cfg["trend_filter"] = {"price_vs_ma_long": 0.0, "price_vs_ma_short": 0.0}
@@ -208,6 +231,9 @@ def run_backtest(
     # katılır; öncesinde yok sayılır. Kapsam raporu sepet bazında tutulur.
     sig_frames: dict[str, pd.DataFrame] = {}
     first_bar: dict[str, pd.Timestamp] = {}
+    # Görev 2.1: ertesi-gün-açılış dolgusu için sembol başına "sonraki bar açılışı"
+    # serisi (bugünün tarihine hizalı: next_open[dt] = ertesi işlem günü open'ı).
+    next_open: dict[str, pd.Series] = {}
     skipped: dict[Basket, list[str]] = {b: [] for b in universe}
     for basket, syms in universe.items():
         for sym in syms:
@@ -224,6 +250,7 @@ def run_backtest(
             if not sf.empty:
                 sig_frames[sym] = sf
                 first_bar[sym] = df.index[0]
+                next_open[sym] = df["open"].astype(float).shift(-1)
             else:
                 skipped[basket].append(sym)
     if verbose:
@@ -271,20 +298,59 @@ def run_backtest(
             return None
         return sf.loc[dt]
 
-    def close_position(sym: str, price: float, dt, reason: str) -> None:
+    def fill_price(sym: str, dt) -> Optional[float]:
+        """Karar günü dt için etkin dolgu fiyatı (maliyet HARİÇ, ham).
+
+        fill_mode=next_open ise ertesi bar açılışı; yoksa (son bar) o gün
+        kapanışına düşülür. fill_mode=close ise doğrudan o gün kapanışı.
+        """
+        if fill_mode == "next_open":
+            ser = next_open.get(sym)
+            if ser is not None and dt in ser.index:
+                nxt = ser.loc[dt]
+                if pd.notna(nxt) and float(nxt) > 0:
+                    return float(nxt)
+        return last_price.get(sym)
+
+    def close_position(sym: str, dt, reason: str, price: Optional[float] = None) -> None:
         nonlocal cash
         pos = positions.pop(sym)
-        proceeds = pos.shares * price
+        raw = price if price is not None else last_price.get(sym, pos.entry_price)
+        # Görev 2.1: satışta maliyet etkin fiyata gömülür (aşağı yönlü)
+        exit_px = raw * (1.0 - cost_frac)
+        proceeds = pos.shares * exit_px
         cash += proceeds
+        # entry_price zaten alış maliyetini içerir; PnL iki yönlü maliyeti yansıtır
         pnl = proceeds - pos.shares * pos.entry_price
-        ret = (price - pos.entry_price) / pos.entry_price * 100.0
+        ret = (exit_px - pos.entry_price) / pos.entry_price * 100.0
         trades.append(Trade(
             symbol=sym, basket=pos.basket.value,
             entry_date=str(pos.entry_date.date()), exit_date=str(pd.Timestamp(dt).date()),
-            entry_price=round(pos.entry_price, 2), exit_price=round(price, 2),
+            entry_price=round(pos.entry_price, 4), exit_price=round(exit_px, 4),
             shares=round(pos.shares, 4), pnl=round(pnl, 2), return_pct=round(ret, 2),
             reason=reason,
         ))
+
+    def open_position(sym: str, basket: Basket, alloc: float, dt) -> bool:
+        """alloc dolarlık hedefle pozisyon aç. Maliyet alış fiyatına gömülür.
+
+        Kesirli hisse kapalıysa tam adete yuvarlanır. Nakit yetmez veya adet 0
+        ise açılmaz (False döner). True = açıldı.
+        """
+        nonlocal cash
+        raw = fill_price(sym, dt)
+        if not raw or raw <= 0:
+            return False
+        buy_px = raw * (1.0 + cost_frac)          # Görev 2.1: alış maliyeti (yukarı)
+        shares = alloc / buy_px if fractional_shares else math.floor(alloc / buy_px)
+        if shares <= 0:
+            return False
+        cost = shares * buy_px
+        if cost > cash + 1e-6:                    # yuvarlama emniyeti
+            return False
+        cash -= cost
+        positions[sym] = Position(shares, buy_px, pd.Timestamp(dt), basket)
+        return True
 
     for dt in all_dates:
         # Fiyatları güncelle
@@ -293,7 +359,9 @@ def run_backtest(
             if row is not None:
                 last_price[sym] = float(row["close"])
 
-        # 1) Stop-loss ve SELL sinyalleri (açık pozisyonlar)
+        # 1) Stop-loss ve SELL sinyalleri (açık pozisyonlar). Tespit kapanıştan;
+        #    dolgu fill_mode'a göre (next_open ertesi açılış). close_position
+        #    fiyatı fill_price'tan alır.
         for sym in list(positions.keys()):
             price = last_price.get(sym)
             if price is None:
@@ -302,37 +370,59 @@ def run_backtest(
             sl = check_stop_loss(sym, pos.basket, pos.entry_price, price, stop_loss_pct)
             row = lookup(sym, dt)
             if sl is not None:
-                close_position(sym, price, dt, "stop_loss")
+                close_position(sym, dt, "stop_loss", price=fill_price(sym, dt))
             elif row is not None and row["decision"] == "SELL":
-                close_position(sym, price, dt, "signal_sell")
+                close_position(sym, dt, "signal_sell", price=fill_price(sym, dt))
 
         # 2) BUY: her sepette boş slotları en yüksek skorlu adaylarla doldur
         equity = cash + sum(positions[s].shares * last_price.get(s, positions[s].entry_price)
                             for s in positions)
-        for basket, syms in universe.items():
-            held = [s for s in positions if positions[s].basket == basket]
-            slots = positions_per_basket - len(held)
+
+        def basket_candidates(basket: Basket, syms: list[str]):
+            """basket'te boş slot sayısı kadar en yüksek skorlu BUY adayı."""
+            slots = positions_per_basket - sum(1 for s in positions
+                                               if positions[s].basket == basket)
             if slots <= 0:
-                continue
-            candidates = []
+                return []
+            cands = []
             for sym in syms:
                 if sym in positions:
                     continue
                 row = lookup(sym, dt)
                 if row is not None and row["decision"] == "BUY":
-                    candidates.append((sym, float(row["score"])))
-            candidates.sort(key=lambda x: x[1], reverse=True)
-            for sym, _score in candidates[:slots]:
-                price = last_price.get(sym)
-                if not price:
-                    continue
-                target_value = per_pos_frac[basket] * equity
-                budget = min(target_value, cash)
-                shares = math.floor(budget / price)
-                if shares <= 0:
-                    continue
-                cash -= shares * price
-                positions[sym] = Position(shares, price, pd.Timestamp(dt), basket)
+                    cands.append((sym, float(row["score"])))
+            cands.sort(key=lambda x: x[1], reverse=True)
+            return cands[:slots]
+
+        if sizing_mode == "v2":
+            # Görev 2.2: aynı gün TÜM sepetlerdeki adaylar mevcut nakdi hedef
+            # ağırlıkları oranında paylaşır (sepet sırası avantajı yok).
+            day_cands = []  # (sym, basket, target_weight)
+            for basket, syms in universe.items():
+                for sym, _score in basket_candidates(basket, syms):
+                    day_cands.append((sym, basket, per_pos_frac[basket]))
+            if day_cands:
+                holdings_value = equity - cash
+                deploy_cap = deployment_pct / 100.0 * equity
+                available = max(min(cash, deploy_cap - holdings_value), 0.0)
+                desired = {sym: w * equity for sym, _b, w in day_cands}
+                total_desired = sum(desired.values())
+                # Orantılı paylaşım: herkesin dolum oranı ortak f = available/talep
+                f = min(1.0, available / total_desired) if total_desired > 0 else 0.0
+                # Dolum min_fill_pct'in altındaysa bugün hiçbiri açılmaz (ertelenir)
+                if f >= min_fill_pct:
+                    # Skor sırasına göre aç (nakit yuvarlama artıkları en iyi adaya)
+                    for sym, basket, _w in sorted(
+                        day_cands,
+                        key=lambda c: desired[c[0]], reverse=True,
+                    ):
+                        open_position(sym, basket, desired[sym] * f, dt)
+        else:
+            # legacy: mevcut davranış BİREBİR — sepet sırasıyla, min(hedef, nakit)
+            for basket, syms in universe.items():
+                for sym, _score in basket_candidates(basket, syms):
+                    target_value = per_pos_frac[basket] * equity
+                    open_position(sym, basket, min(target_value, cash), dt)
 
         # Günlük özsermaye
         equity = cash + sum(positions[s].shares * last_price.get(s, positions[s].entry_price)
@@ -340,9 +430,10 @@ def run_backtest(
         equity_dates.append(pd.Timestamp(dt))
         equity_vals.append(equity)
 
-    # Kalan pozisyonları son fiyattan kapat
+    # Kalan pozisyonları son fiyattan kapat (dönem sonunda ertesi açılış yok →
+    # son kapanış kullanılır; satış maliyeti yine uygulanır)
     for sym in list(positions.keys()):
-        close_position(sym, last_price[sym], all_dates[-1], "backtest_end")
+        close_position(sym, all_dates[-1], "backtest_end", price=last_price.get(sym))
 
     equity_curve = pd.Series(equity_vals, index=equity_dates, name="equity")
     target = float(strat.portfolio["target_return_pct"])
@@ -574,6 +665,12 @@ def main() -> None:
                         help="Yönlü hacim bileşenini kapat (varyant testi)")
     parser.add_argument("--no-rr-gate", action="store_true",
                         help="Risk/Ödül kapısını kapat (varyant testi)")
+    parser.add_argument("--sizing", choices=["legacy", "v2"], default=None,
+                        help="Pozisyon boyutlandırma modu (config'i ezer)")
+    parser.add_argument("--fill", choices=["close", "next_open"], default=None,
+                        help="Dolgu fiyatı modu (config'i ezer)")
+    parser.add_argument("--no-costs", action="store_true",
+                        help="Komisyon/kayma maliyetlerini kapat (maliyetsiz koşu)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -586,6 +683,9 @@ def main() -> None:
         disable_trend_filter=args.no_trend_filter,
         disable_volume_direction=args.no_volume_direction,
         disable_rr_gate=args.no_rr_gate,
+        sizing_mode=args.sizing,
+        fill_mode=args.fill,
+        apply_costs=(False if args.no_costs else None),
     )
     _print_report(result)
     _print_coverage(result)

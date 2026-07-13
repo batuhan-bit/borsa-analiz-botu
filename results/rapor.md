@@ -1,38 +1,40 @@
-# Backtest Doğrulama Raporu — Faz 1 (Görev 1.1, 1.2, 1.3)
+# Backtest Doğrulama Raporu — Faz 2 (Sizing v2 + gerçekçilik katmanı)
 
-_Üretim: 2026-07-13 15:26 · `python -m backtest.report` · strategy.yaml parametreleri DONDURULMUŞ (Faz 1 kuralı)_
+_Üretim: 2026-07-13 17:14 · `python -m backtest.report` · strategy.yaml eşikleri ve skor ağırlıkları DONDURULMUŞ (yalnız boyutlandırma/dolgu/maliyet katmanı değişti)_
+
+**Birincil rakamlar** artık gerçekçi: pozisyon boyutlandırma **v2** (deployment %95, min-dolum %60, tam adet), dolgu **ertesi-gün-açılışı**, işlem maliyeti **10 bps/işlem** (komisyon+kayma). Son iki kolon eski **legacy** koşuyu (sepet-sıralı boyut, kapanış dolgusu, **maliyetsiz**) ve farkı gösterir — Görev 2.1 (dolgu+maliyet) ile 2.2 (boyutlandırma) birlikte.
 
 ## 1) Ana dönem: son 3 yıl (in-sample)
 
 Dönem: **2023-07-10 → 2026-07-10** · Başlangıç sermayesi: $3,000 · Yalnızca teknik sinyaller (temel katman backtest dışı).
 
-| Konfigürasyon | Toplam % | Yıllık % | Maks DD % | Sharpe | Calmar | İşlem | Ort. işlem % | Toplam getiri %90 GA |
-|---|---|---|---|---|---|---|---|---|
-| Strateji (mevcut config) | +187.71 | +42.22 | -25.54 | 1.20 | 1.65 | 28 | +10.42 | [-23.42 … +105.29] |
-| Eşit-ağırlık evren (al-tut) | +276.15 | +55.50 | -36.26 | 1.34 | 1.53 | — | — | — |
-| Sepet-ağırlıklı evren (al-tut) | +243.02 | +50.80 | -31.94 | 1.37 | 1.59 | — | — | — |
-| SPY (al-tut) | +78.24 | +21.24 | -18.76 | 1.34 | 1.13 | — | — | — |
+| Konfigürasyon | Toplam % | Yıllık % | Maks DD % | Sharpe | Calmar | İşlem | Ort. işlem % | Toplam getiri %90 GA | Legacy Top.% (maliyetsiz) | Δ Top.% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Strateji (mevcut config) | +73.01 | +20.04 | -32.24 | 0.74 | 0.62 | 26 | +7.96 | [-22.05 … +73.98] | +187.71 | -114.70 |
+| Eşit-ağırlık evren (al-tut) | +276.15 | +55.50 | -36.26 | 1.34 | 1.53 | — | — | — | — | — |
+| Sepet-ağırlıklı evren (al-tut) | +243.02 | +50.80 | -31.94 | 1.37 | 1.59 | — | — | — | — | — |
+| SPY (al-tut) | +78.24 | +21.24 | -18.76 | 1.34 | 1.13 | — | — | — | — | — |
 
-- **Strateji (mevcut config)** alfa: -88.4 puan vs Eşit-ağırlık evren (al-tut); -55.3 puan vs Sepet-ağırlıklı evren (al-tut); +109.5 puan vs SPY (al-tut)
+- **Strateji (mevcut config)** alfa: -203.1 puan vs Eşit-ağırlık evren (al-tut); -170.0 puan vs Sepet-ağırlıklı evren (al-tut); -5.2 puan vs SPY (al-tut)
 
-> Not: Evren bugünden geriye seçildiği için bu dönem hindsight bias içerir; benchmark aynı evreni kullandığından alfa kıyası yine de anlamlıdır. Parametreler bu döneme bakılarak ayarlandığı için bu tablo IN-SAMPLE'dır.
+> Not: Evren bugünden geriye seçildiği için bu dönem hindsight bias içerir; benchmark aynı evreni kullandığından alfa kıyası yine de anlamlıdır. Parametreler bu döneme bakılarak ayarlandığı için bu tablo IN-SAMPLE'dır. Benchmark'lar pasif al-tut olduğundan boyutlandırma/maliyetten etkilenmez.
 
 ## 2) 2016-2022 dönemi (fiilen out-of-sample)
 
 Parametreler 2023-2026 verisine bakılarak ayarlandı; 2016-2022 görülmemiş veridir. Üç konfigürasyon varyantı, aynı dondurulmuş eşiklerle:
 
-| Konfigürasyon | Toplam % | Yıllık % | Maks DD % | Sharpe | Calmar | İşlem | Ort. işlem % | Toplam getiri %90 GA |
-|---|---|---|---|---|---|---|---|---|
-| (a) Trend filtresi kapalı | +256.01 | +19.93 | -27.60 | 0.99 | 0.72 | 191 | +4.38 | [+100.33 … +393.62] |
-| (b) Trend filtresi açık | +521.93 | +29.90 | -39.50 | 1.00 | 0.76 | 48 | +47.81 | [+37.36 … +841.21] |
-| (c) Trend + yönlü hacim + R/R | +122.32 | +12.11 | -44.47 | 0.58 | 0.27 | 41 | +15.02 | [-65.82 … +339.76] |
-| Eşit-ağırlık evren (al-tut) | +293.17 | +21.65 | -38.97 | 0.90 | 0.56 | — | — | — |
-| Sepet-ağırlıklı evren (al-tut) | +285.04 | +21.28 | -39.24 | 0.90 | 0.54 | — | — | — |
-| SPY (al-tut) | +115.77 | +11.64 | -33.72 | 0.67 | 0.35 | — | — | — |
+| Konfigürasyon | Toplam % | Yıllık % | Maks DD % | Sharpe | Calmar | İşlem | Ort. işlem % | Toplam getiri %90 GA | Legacy Top.% (maliyetsiz) | Δ Top.% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| (a) Trend filtresi kapalı | +231.98 | +18.74 | -27.76 | 0.91 | 0.67 | 190 | +4.48 | [+64.27 … +379.44] | +256.01 | -24.03 |
+| (b) Trend filtresi açık | +441.82 | +27.38 | -35.03 | 1.04 | 0.78 | 39 | +27.54 | [+63.05 … +608.84] | +521.93 | -80.11 |
+| (c) Trend + yönlü hacim + R/R | +139.72 | +13.33 | -48.60 | 0.63 | 0.27 | 30 | +22.07 | [-6.01 … +286.94] | +122.32 | +17.40 |
+| Eşit-ağırlık evren (al-tut) | +293.17 | +21.65 | -38.97 | 0.90 | 0.56 | — | — | — | — | — |
+| Sepet-ağırlıklı evren (al-tut) | +285.04 | +21.28 | -39.24 | 0.90 | 0.54 | — | — | — | — | — |
+| SPY (al-tut) | +115.77 | +11.64 | -33.72 | 0.67 | 0.35 | — | — | — | — | — |
 
-- **(a) Trend filtresi kapalı** alfa: -37.2 puan vs Eşit-ağırlık evren (al-tut); -29.0 puan vs Sepet-ağırlıklı evren (al-tut); +140.2 puan vs SPY (al-tut)
-- **(b) Trend filtresi açık** alfa: +228.8 puan vs Eşit-ağırlık evren (al-tut); +236.9 puan vs Sepet-ağırlıklı evren (al-tut); +406.2 puan vs SPY (al-tut)
-- **(c) Trend + yönlü hacim + R/R** alfa: -170.9 puan vs Eşit-ağırlık evren (al-tut); -162.7 puan vs Sepet-ağırlıklı evren (al-tut); +6.5 puan vs SPY (al-tut)
+- **(a) Trend filtresi kapalı** alfa: -61.2 puan vs Eşit-ağırlık evren (al-tut); -53.1 puan vs Sepet-ağırlıklı evren (al-tut); +116.2 puan vs SPY (al-tut)
+- **(b) Trend filtresi açık** alfa: +148.6 puan vs Eşit-ağırlık evren (al-tut); +156.8 puan vs Sepet-ağırlıklı evren (al-tut); +326.1 puan vs SPY (al-tut)
+- **(c) Trend + yönlü hacim + R/R** alfa: -153.5 puan vs Eşit-ağırlık evren (al-tut); -145.3 puan vs Sepet-ağırlıklı evren (al-tut); +24.0 puan vs SPY (al-tut)
 
 ### İstatistiksel değerlendirme (bootstrap %90 GA, Görev 1.3)
 
@@ -50,15 +52,15 @@ Parametreler 2023-2026 verisine bakılarak ayarlandı; 2016-2022 görülmemiş v
 
 ## 3) Rejim bazlı alt-rapor: ayı piyasalarında koruma
 
-Soru: koruyucu özellikler (trend filtresi, yönlü hacim, R/R kapısı) düşüş rejimlerinde gerçekten koruyor mu? (2016-2022 koşularının pencere içi kesitleri)
+Soru: koruyucu özellikler (trend filtresi, yönlü hacim, R/R kapısı) düşüş rejimlerinde gerçekten koruyor mu? (2016-2022 v2 koşularının pencere içi kesitleri)
 
 **2018 Q4 düzeltmesi** (2018-10-01 → 2018-12-31)
 
 | Konfigürasyon | Pencere getirisi % | Pencere içi maks DD % |
 |---|---|---|
-| (a) Trend filtresi kapalı | -16.78 | -20.93 |
-| (b) Trend filtresi açık | -31.25 | -34.35 |
-| (c) Trend + yönlü hacim + R/R | -40.63 | -44.21 |
+| (a) Trend filtresi kapalı | -15.54 | -20.37 |
+| (b) Trend filtresi açık | -30.78 | -35.03 |
+| (c) Trend + yönlü hacim + R/R | -37.03 | -40.41 |
 | Eşit-ağırlık evren (al-tut) | -16.50 | -21.69 |
 | Sepet-ağırlıklı evren (al-tut) | -16.60 | -21.85 |
 | SPY (al-tut) | -13.83 | -19.20 |
@@ -67,9 +69,9 @@ Soru: koruyucu özellikler (trend filtresi, yönlü hacim, R/R kapısı) düşü
 
 | Konfigürasyon | Pencere getirisi % | Pencere içi maks DD % |
 |---|---|---|
-| (a) Trend filtresi kapalı | -13.87 | -25.50 |
-| (b) Trend filtresi açık | -9.21 | -32.97 |
-| (c) Trend + yönlü hacim + R/R | -9.20 | -28.66 |
+| (a) Trend filtresi kapalı | -10.27 | -25.33 |
+| (b) Trend filtresi açık | -10.71 | -30.77 |
+| (c) Trend + yönlü hacim + R/R | -20.70 | -27.99 |
 | Eşit-ağırlık evren (al-tut) | -1.39 | -27.37 |
 | Sepet-ağırlıklı evren (al-tut) | -1.23 | -27.47 |
 | SPY (al-tut) | -9.85 | -33.72 |
@@ -78,9 +80,9 @@ Soru: koruyucu özellikler (trend filtresi, yönlü hacim, R/R kapısı) düşü
 
 | Konfigürasyon | Pencere getirisi % | Pencere içi maks DD % |
 |---|---|---|
-| (a) Trend filtresi kapalı | +8.33 | -13.23 |
-| (b) Trend filtresi açık | -1.26 | -19.30 |
-| (c) Trend + yönlü hacim + R/R | -26.39 | -28.19 |
+| (a) Trend filtresi kapalı | -1.77 | -16.23 |
+| (b) Trend filtresi açık | +5.74 | -18.53 |
+| (c) Trend + yönlü hacim + R/R | -17.88 | -22.07 |
 | Eşit-ağırlık evren (al-tut) | -25.26 | -36.86 |
 | Sepet-ağırlıklı evren (al-tut) | -26.81 | -37.98 |
 | SPY (al-tut) | -18.65 | -24.50 |
@@ -90,8 +92,15 @@ Soru: koruyucu özellikler (trend filtresi, yönlü hacim, R/R kapısı) düşü
 - **Evren önyargısı:** 60 sembol bugünden geriye seçildi (survivorship/hindsight
   bias). Benchmark aynı evreni kullandığı için alfa ölçümü bu önyargıyı büyük
   ölçüde nötrler, ama mutlak getiriler şişkin okunmalıdır.
-- **Dolgu fiyatı:** Mevcut backtest sinyal günü kapanışından dolduruyor;
-  ertesi-gün-açılış dolgusu ve komisyon/kayma Görev 2.1'de ele alınacak.
+- **Dolgu fiyatı (Görev 2.1 ✓):** Birincil koşular artık sinyal günü kapanışında
+  karar verip ERTESİ GÜN AÇILIŞINDAN dolduruyor ve her işleme komisyon+kayma
+  uyguluyor. Günlük özsermaye yine kapanıştan işaretlenir (giriş ertesi açılıştan
+  kaydedildiğinden en çok 1 günlük işaretleme gecikmesi kalır — toplam getiriye
+  etkisi ihmal edilebilir).
+- **Boyutlandırma (Görev 2.2 ✓):** Birincil koşular v2 kullanır — aynı gün adaylar
+  nakdi hedef ağırlıkları oranında paylaşır (sepet sırası avantajı yok), dolum
+  min_fill_pct altındaysa pozisyon ertelenir, toplam dağıtım deployment_pct ile
+  sınırlıdır. Legacy kolonu eski nakit-açlığı davranışını kıyas için korur.
 - **Temel katman backtest dışı:** Bu rapor yalnızca teknik sinyalleri ölçer;
   canlıdaki %35 ağırlıklı temel katman point-in-time test edilemedi (Görev 3.1).
 - **Küçük örneklem:** İşlem sayıları düşük; GA'lar geniş. GA'ları çakışan

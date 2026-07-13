@@ -60,6 +60,17 @@ def _format_signal_line(sig: Signal) -> str:
     # Önemli notlar (ayrı satır, vurgulu)
     for note in sig.notes:
         line += f"\n      {note}"
+    # Önerilen tutar/adet (Sizing v2) — BUY için
+    sz = sig.sizing
+    if sz:
+        if not sz.get("affordable"):
+            line += (f"\n      💰 Öneri: ~${sz['amount']:,.0f} hedef "
+                     f"(%{sz['weight_pct']:g} ağırlık) — 1 hisse hedefi aşıyor")
+        else:
+            shares = sz["shares"]
+            shares_txt = f"{shares:g}" if sz.get("fractional") else f"{int(shares)}"
+            line += (f"\n      💰 Öneri: ~${sz['amount']:,.0f} (%{sz['weight_pct']:g} "
+                     f"ağırlık) → {shares_txt} adet ≈ ${sz['cost']:,.0f}")
     return line
 
 

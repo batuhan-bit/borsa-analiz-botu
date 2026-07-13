@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 
@@ -55,46 +57,80 @@ VARIANTS = [
 ]
 
 
+@dataclass
+class RunPair:
+    """Aynı konfigürasyonun iki koşusu: birincil (Faz 2 gerçekçi) + legacy kıyas."""
+    primary: BacktestResult              # v2 + maliyetli + ertesi-açılış dolgusu
+    legacy: Optional[BacktestResult]     # legacy + maliyetsiz + kapanış dolgusu
+
+
+def run_pair(settings, *, label: str, basket_limit=None,
+             start=None, end=None, **flags) -> RunPair:
+    """Bir konfigürasyonu hem Faz 2 (v2+maliyet+next_open) hem legacy koşar.
+
+    İkisi de AYNI dondurulmuş strategy.yaml eşiklerini kullanır; yalnız
+    boyutlandırma/dolgu/maliyet katmanı değişir — böylece Görev 2.1+2.2'nin
+    net etkisi (Δ) tabloda görünür.
+    """
+    primary = run_backtest(settings, basket_limit=basket_limit, start=start, end=end,
+                           label=label, verbose=False,
+                           sizing_mode="v2", fill_mode="next_open", apply_costs=True,
+                           **flags)
+    legacy = run_backtest(settings, basket_limit=basket_limit, start=start, end=end,
+                          label=label, verbose=False,
+                          sizing_mode="legacy", fill_mode="close", apply_costs=False,
+                          **flags)
+    return RunPair(primary, legacy)
+
+
 def _fmt(v, plus: bool = True) -> str:
     if v is None:
         return "—"
     return f"{v:+.2f}" if plus else f"{v:.2f}"
 
 
-def _strategy_row(r: BacktestResult) -> str:
+def _strategy_row(pair: "RunPair") -> str:
+    r = pair.primary
     ci = (f"[{_fmt(r.ci_low_pct)} … {_fmt(r.ci_high_pct)}]"
           if r.ci_low_pct is not None else "—")
     calmar = _fmt(r.calmar, plus=False)
+    # Legacy (maliyetsiz) kıyas kolonu + fark, Görev 2.1/2.2 etkisi görünsün
+    leg = pair.legacy
+    leg_total = _fmt(leg.total_return_pct) if leg is not None else "—"
+    delta = (_fmt(r.total_return_pct - leg.total_return_pct)
+             if leg is not None else "—")
     return (f"| {r.label} | {_fmt(r.total_return_pct)} | {_fmt(r.annualized_return_pct)} | "
             f"{r.max_drawdown_pct:.2f} | {r.sharpe:.2f} | {calmar} | "
-            f"{r.num_closed_trades} | {_fmt(r.avg_trade_return_pct)} | {ci} |")
+            f"{r.num_closed_trades} | {_fmt(r.avg_trade_return_pct)} | {ci} | "
+            f"{leg_total} | {delta} |")
 
 
 def _benchmark_row(b: BenchmarkResult) -> str:
     calmar = _fmt(b.calmar, plus=False)
     return (f"| {b.name} | {_fmt(b.total_return_pct)} | {_fmt(b.annualized_return_pct)} | "
-            f"{b.max_drawdown_pct:.2f} | {b.sharpe:.2f} | {calmar} | — | — | — |")
+            f"{b.max_drawdown_pct:.2f} | {b.sharpe:.2f} | {calmar} | — | — | — | — | — |")
 
 
 TABLE_HEADER = (
     "| Konfigürasyon | Toplam % | Yıllık % | Maks DD % | Sharpe | Calmar "
-    "| İşlem | Ort. işlem % | Toplam getiri %90 GA |\n"
-    "|---|---|---|---|---|---|---|---|---|"
+    "| İşlem | Ort. işlem % | Toplam getiri %90 GA | Legacy Top.% (maliyetsiz) | Δ Top.% |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|"
 )
 
 
-def _comparison_table(strategies: list[BacktestResult],
+def _comparison_table(strategies: list["RunPair"],
                       benchmarks: list[BenchmarkResult]) -> list[str]:
     lines = [TABLE_HEADER]
-    lines += [_strategy_row(r) for r in strategies]
+    lines += [_strategy_row(p) for p in strategies]
     lines += [_benchmark_row(b) for b in benchmarks]
     return lines
 
 
-def _alpha_lines(strategies: list[BacktestResult],
+def _alpha_lines(strategies: list["RunPair"],
                  benchmarks: list[BenchmarkResult]) -> list[str]:
     lines = []
-    for r in strategies:
+    for p in strategies:
+        r = p.primary
         parts = [f"{r.total_return_pct - b.total_return_pct:+.1f} puan vs {b.name}"
                  for b in benchmarks]
         lines.append(f"- **{r.label}** alfa: " + "; ".join(parts))
@@ -122,7 +158,7 @@ def _window_stats(curve: pd.Series, ws: pd.Timestamp, we: pd.Timestamp):
     return ret, max_drawdown_pct(sl)
 
 
-def _regime_section(windows: list[dict], strategies: list[BacktestResult],
+def _regime_section(windows: list[dict], strategies: list["RunPair"],
                     benchmarks: list[BenchmarkResult]) -> list[str]:
     lines = []
     for w in windows:
@@ -130,7 +166,8 @@ def _regime_section(windows: list[dict], strategies: list[BacktestResult],
         lines.append(f"\n**{w['name']}** ({w['start']} → {w['end']})\n")
         lines.append("| Konfigürasyon | Pencere getirisi % | Pencere içi maks DD % |")
         lines.append("|---|---|---|")
-        for r in strategies:
+        for p in strategies:
+            r = p.primary
             ret, dd = _window_stats(r.equity_curve, ws, we)
             lines.append(f"| {r.label} | {_fmt(ret)} | {_fmt(dd, plus=False)} |")
         for b in benchmarks:
@@ -145,54 +182,71 @@ def build_report(basket_limit: int | None = None) -> str:
     lookback = strat.backtest["lookback_years"]
     boot_pct = int(float(strat.backtest.get("bootstrap", {}).get("confidence", 0.9)) * 100)
 
+    # Aktif gerçekçilik ayarları (rapor başlığında görünsün)
+    sz = strat.portfolio.get("sizing", {}) or {}
+    cost_bps = int(float(strat.backtest.get("commission_bps", 0))
+                   + float(strat.backtest.get("slippage_bps", 0)))
+
     # --- 1) Ana dönem: mevcut config + kıyas çizgileri ---
-    log.info("Ana dönem (son %s yıl) koşuluyor...", lookback)
-    main_run = run_backtest(settings, basket_limit=basket_limit,
-                            label="Strateji (mevcut config)", verbose=False)
+    log.info("Ana dönem (son %s yıl) koşuluyor (v2 + legacy)...", lookback)
+    main_pair = run_pair(settings, basket_limit=basket_limit,
+                         label="Strateji (mevcut config)")
     main_bench = run_benchmarks(settings, basket_limit=basket_limit)
 
     # --- 2) 2016-2022 out-of-sample: üç varyant + kıyas çizgileri ---
-    oos_runs: list[BacktestResult] = []
+    oos_pairs: list[RunPair] = []
     for label, flags in VARIANTS:
-        log.info("2016-2022 varyantı koşuluyor: %s", label)
-        oos_runs.append(run_backtest(settings, basket_limit=basket_limit,
-                                     start=OOS_START, end=OOS_END,
-                                     label=label, verbose=False, **flags))
+        log.info("2016-2022 varyantı koşuluyor (v2 + legacy): %s", label)
+        oos_pairs.append(run_pair(settings, basket_limit=basket_limit,
+                                  start=OOS_START, end=OOS_END,
+                                  label=label, **flags))
     oos_bench = run_benchmarks(settings, basket_limit=basket_limit,
                                start=OOS_START, end=OOS_END)
 
-    # --- 3) Gürültü uyarıları (Görev 1.3) ---
+    # --- 3) Gürültü uyarıları (Görev 1.3) — birincil (v2) koşular üzerinden ---
     warnings = []
-    for i in range(len(oos_runs)):
-        for j in range(i + 1, len(oos_runs)):
-            msg = sample_noise_warning(oos_runs[i], oos_runs[j])
+    for i in range(len(oos_pairs)):
+        for j in range(i + 1, len(oos_pairs)):
+            msg = sample_noise_warning(oos_pairs[i].primary, oos_pairs[j].primary)
             if msg:
                 warnings.append(msg)
+
+    main_run = main_pair.primary
 
     # --- Markdown ---
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     L: list[str] = []
-    L.append("# Backtest Doğrulama Raporu — Faz 1 (Görev 1.1, 1.2, 1.3)")
+    L.append("# Backtest Doğrulama Raporu — Faz 2 (Sizing v2 + gerçekçilik katmanı)")
     L.append(f"\n_Üretim: {now} · `python -m backtest.report` · "
-             "strategy.yaml parametreleri DONDURULMUŞ (Faz 1 kuralı)_\n")
+             "strategy.yaml eşikleri ve skor ağırlıkları DONDURULMUŞ "
+             "(yalnız boyutlandırma/dolgu/maliyet katmanı değişti)_\n")
+    L.append("**Birincil rakamlar** artık gerçekçi: pozisyon boyutlandırma "
+             f"**v2** (deployment %{_num(sz.get('deployment_pct', 95))}, "
+             f"min-dolum %{int(float(sz.get('min_fill_pct', 0.6)) * 100)}, "
+             f"{'kesirli hisse' if sz.get('fractional_shares') else 'tam adet'}), "
+             f"dolgu **ertesi-gün-açılışı**, işlem maliyeti **{cost_bps} bps/işlem** "
+             "(komisyon+kayma). Son iki kolon eski **legacy** koşuyu "
+             "(sepet-sıralı boyut, kapanış dolgusu, **maliyetsiz**) ve farkı gösterir "
+             "— Görev 2.1 (dolgu+maliyet) ile 2.2 (boyutlandırma) birlikte.\n")
 
     L.append("## 1) Ana dönem: son 3 yıl (in-sample)")
     L.append(f"\nDönem: **{main_run.start} → {main_run.end}** · "
              f"Başlangıç sermayesi: ${main_run.initial_capital:,.0f} · "
              "Yalnızca teknik sinyaller (temel katman backtest dışı).\n")
-    L += _comparison_table([main_run], main_bench)
+    L += _comparison_table([main_pair], main_bench)
     L.append("")
-    L += _alpha_lines([main_run], main_bench)
+    L += _alpha_lines([main_pair], main_bench)
     L.append("\n> Not: Evren bugünden geriye seçildiği için bu dönem hindsight bias "
              "içerir; benchmark aynı evreni kullandığından alfa kıyası yine de anlamlıdır. "
-             "Parametreler bu döneme bakılarak ayarlandığı için bu tablo IN-SAMPLE'dır.")
+             "Parametreler bu döneme bakılarak ayarlandığı için bu tablo IN-SAMPLE'dır. "
+             "Benchmark'lar pasif al-tut olduğundan boyutlandırma/maliyetten etkilenmez.")
 
     L.append("\n## 2) 2016-2022 dönemi (fiilen out-of-sample)")
     L.append("\nParametreler 2023-2026 verisine bakılarak ayarlandı; 2016-2022 "
              "görülmemiş veridir. Üç konfigürasyon varyantı, aynı dondurulmuş eşiklerle:\n")
-    L += _comparison_table(oos_runs, oos_bench)
+    L += _comparison_table(oos_pairs, oos_bench)
     L.append("")
-    L += _alpha_lines(oos_runs, oos_bench)
+    L += _alpha_lines(oos_pairs, oos_bench)
 
     L.append(f"\n### İstatistiksel değerlendirme (bootstrap %{boot_pct} GA, Görev 1.3)")
     if warnings:
@@ -204,28 +258,41 @@ def build_report(basket_limit: int | None = None) -> str:
 
     L.append("\n### Kapsam raporu (Görev 1.2 politikası: sembol, verisi başladığı gün katılır)")
     L.append("")
-    L += _coverage_section(oos_runs[-1])
+    L += _coverage_section(oos_pairs[-1].primary)
 
     L.append("\n## 3) Rejim bazlı alt-rapor: ayı piyasalarında koruma")
     L.append("\nSoru: koruyucu özellikler (trend filtresi, yönlü hacim, R/R kapısı) "
-             "düşüş rejimlerinde gerçekten koruyor mu? (2016-2022 koşularının "
+             "düşüş rejimlerinde gerçekten koruyor mu? (2016-2022 v2 koşularının "
              "pencere içi kesitleri)")
     windows = strat.backtest.get("regime_windows", [])
-    L += _regime_section(windows, oos_runs, oos_bench)
+    L += _regime_section(windows, oos_pairs, oos_bench)
 
     L.append("\n## Sınırlamalar (dürüstlük notları)")
     L.append("""
 - **Evren önyargısı:** 60 sembol bugünden geriye seçildi (survivorship/hindsight
   bias). Benchmark aynı evreni kullandığı için alfa ölçümü bu önyargıyı büyük
   ölçüde nötrler, ama mutlak getiriler şişkin okunmalıdır.
-- **Dolgu fiyatı:** Mevcut backtest sinyal günü kapanışından dolduruyor;
-  ertesi-gün-açılış dolgusu ve komisyon/kayma Görev 2.1'de ele alınacak.
+- **Dolgu fiyatı (Görev 2.1 ✓):** Birincil koşular artık sinyal günü kapanışında
+  karar verip ERTESİ GÜN AÇILIŞINDAN dolduruyor ve her işleme komisyon+kayma
+  uyguluyor. Günlük özsermaye yine kapanıştan işaretlenir (giriş ertesi açılıştan
+  kaydedildiğinden en çok 1 günlük işaretleme gecikmesi kalır — toplam getiriye
+  etkisi ihmal edilebilir).
+- **Boyutlandırma (Görev 2.2 ✓):** Birincil koşular v2 kullanır — aynı gün adaylar
+  nakdi hedef ağırlıkları oranında paylaşır (sepet sırası avantajı yok), dolum
+  min_fill_pct altındaysa pozisyon ertelenir, toplam dağıtım deployment_pct ile
+  sınırlıdır. Legacy kolonu eski nakit-açlığı davranışını kıyas için korur.
 - **Temel katman backtest dışı:** Bu rapor yalnızca teknik sinyalleri ölçer;
   canlıdaki %35 ağırlıklı temel katman point-in-time test edilemedi (Görev 3.1).
 - **Küçük örneklem:** İşlem sayıları düşük; GA'lar geniş. GA'ları çakışan
   konfigürasyonlar arasında üstünlük iddia edilemez.""")
 
     return "\n".join(L) + "\n"
+
+
+def _num(v) -> str:
+    """95.0 -> '95', 95.5 -> '95.5' (rapor başlığı için sade sayı)."""
+    f = float(v)
+    return str(int(f)) if f == int(f) else f"{f:g}"
 
 
 def main() -> None:

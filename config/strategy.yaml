@@ -13,6 +13,22 @@ portfolio:
   positions_per_basket: 2
   execution: manual         # bot sadece sinyal üretir, alım-satımı kullanıcı yapar
 
+  # --- Pozisyon boyutlandırma (Görev 2.2) ---
+  # legacy: mevcut davranışı BİREBİR korur — sepetler strategy.yaml sırasıyla
+  #   işlenir, her pozisyon min(sepet-hedefi, kalan nakit) kadar alınır. Sepet
+  #   sırası öndeki sepetlere gün-içi nakit avantajı verir; radar-altı en sona
+  #   kalan nakitle cılız dolar (bkz. pozisyon-boyutlandırma-denetimi.md).
+  # v2: aynı gün tüm sepetlerdeki BUY adayları mevcut nakdi HEDEF AĞIRLIKLARI
+  #   oranında paylaşır (sepet sırası avantajı yok). Gün-içi dolum oranı
+  #   min_fill_pct'in altında kalırsa pozisyon O GÜN açılmaz, ertelenir (aday
+  #   ertesi gün yeniden değerlendirilir). Toplam dağıtım deployment_pct ile
+  #   sınırlanır (özsermayenin en az %(100-deployment_pct)'i nakit kalır).
+  sizing:
+    mode: v2                 # legacy | v2
+    deployment_pct: 95       # portföyün en çok bu kadarı pozisyonlarda tutulur
+    min_fill_pct: 0.60       # gün-içi dolum bu oranın altındaysa aç-ma, ertele
+    fractional_shares: false # kesirli hisse alınabilsin mi (false = tam adet)
+
 # --- Sepet dağılımı (toplam bütçenin yüzdesi) ---
 baskets:
   low_volatility:
@@ -108,6 +124,16 @@ backtest:
   end_date: null              # ör. "2022-12-31"
   # Dönem başından önce gösterge ısınması (MA200 vb.) için çekilen ekstra gün.
   warmup_days: 400
+  # --- Gerçekçilik katmanı (Görev 2.1) ---
+  # Dolgu fiyatı: close = sinyal günü kapanışı (eski, iyimser); next_open =
+  # sinyal günü kapanışında karar, ertesi gün AÇILIŞINDAN doldur (gerçekçi —
+  # canlıda sinyal kapanıştan sonra üretilir, işlem ancak ertesi gün açılır).
+  fill: next_open             # close | next_open
+  # İşlem maliyeti (baz puan = %0.01). Alış ve satışta ayrı ayrı uygulanır;
+  # komisyon + kayma birlikte etkin fiyata gömülür (alışta yukarı, satışta
+  # aşağı). 0 = maliyetsiz (eski davranış).
+  commission_bps: 5           # işlem başına komisyon (bps)
+  slippage_bps: 5             # işlem başına kayma (bps)
   # İstatistiksel dürüstlük (Görev 1.3): işlem PnL'lerinin yerine-koymalı
   # bootstrap örneklemesiyle toplam getiri güven aralığı.
   bootstrap:

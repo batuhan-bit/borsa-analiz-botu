@@ -22,6 +22,7 @@ from .models import Basket, SignalType
 from .notify import SlackNotifier
 from .risk.risk_manager import check_stop_loss
 from .signals import SignalEngine
+from .signals.sizing import portfolio_equity, suggested_position
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bot")
@@ -41,12 +42,15 @@ def _stop_loss_signals(positions, engine, stop_loss_pct):
     """
     stop_signals = []
     holdings_value = 0.0
+    invested_cost = 0.0
     for pos in positions:
         price = engine.latest_price(pos["symbol"])
         if price is None:
             continue
         if pos.get("shares"):
             holdings_value += pos["shares"] * price
+            if pos.get("entry_price"):
+                invested_cost += pos["shares"] * pos["entry_price"]
         if pos.get("entry_price"):
             sl = check_stop_loss(
                 pos["symbol"], _safe_basket(pos["basket"]),
@@ -54,7 +58,42 @@ def _stop_loss_signals(positions, engine, stop_loss_pct):
             )
             if sl is not None:
                 stop_signals.append(sl)
-    return stop_signals, holdings_value, len(positions)
+    return stop_signals, holdings_value, len(positions), invested_cost
+
+
+def _attach_sizing(signals, settings, holdings_value: float, invested_cost: float) -> None:
+    """BUY sinyallerine Sheets özsermayesinden 'önerilen tutar/adet' ekle.
+
+    Özsermaye = güncel pozisyon değeri + tahmini serbest nakit (budget_max
+    çıpalı — bkz. sizing.portfolio_equity). v2 kuralı: hedef ağırlık ×
+    özsermaye; fractional_shares config'ine saygılı.
+    """
+    portfolio = settings.strategy.portfolio
+    baskets = settings.strategy.baskets
+    sizing_cfg = portfolio.get("sizing", {}) or {}
+    budget_max = portfolio.get("budget_max", 0)
+    ppb = int(portfolio.get("positions_per_basket", 1))
+    equity = portfolio_equity(holdings_value, invested_cost, budget_max)
+
+    for sig in signals:
+        if sig.signal is not SignalType.BUY:
+            continue
+        basket_cfg = baskets.get(sig.basket.value, {})
+        alloc = basket_cfg.get("allocation_pct", 0)
+        suggestion = suggested_position(equity, sig.price, alloc, ppb, sizing_cfg)
+        if suggestion:
+            sig.sizing = suggestion
+
+
+def _format_sizing(sz: dict) -> str:
+    """Öneri sözlüğünü tek satırlık okunur metne çevir."""
+    if not sz.get("affordable"):
+        return (f"💰 Öneri: ~${sz['amount']:,.0f} hedef (%{sz['weight_pct']:g} ağırlık) — "
+                "1 hisse hedefi aşıyor, atlanabilir")
+    shares = sz["shares"]
+    shares_txt = f"{shares:g}" if sz.get("fractional") else f"{int(shares)}"
+    return (f"💰 Öneri: ~${sz['amount']:,.0f} (%{sz['weight_pct']:g} ağırlık) → "
+            f"{shares_txt} adet ≈ ${sz['cost']:,.0f}")
 
 
 def _print_summary(signals) -> None:
@@ -71,6 +110,8 @@ def _print_summary(signals) -> None:
                   f"hedef=${lv['target1']}→${lv['target2']}{rr}")
         for note in sig.notes:
             print(f"            {note}")
+        if sig.sizing:
+            print(f"            {_format_sizing(sig.sizing)}")
 
 
 def main() -> None:
@@ -99,9 +140,13 @@ def main() -> None:
     signals = engine.run(held_symbols=held_symbols)
 
     # 3. Stop-loss kontrolü (açık pozisyonlar) — en öne alınır
-    stop_signals, portfolio_value, open_count = _stop_loss_signals(positions, engine, stop_loss_pct)
+    stop_signals, portfolio_value, open_count, invested_cost = _stop_loss_signals(
+        positions, engine, stop_loss_pct)
     signals = stop_signals + signals
     log.info("%d sinyal (%d stop-loss dahil).", len(signals), len(stop_signals))
+
+    # 3b. BUY sinyallerine önerilen tutar/adet ekle (Sizing v2, ayrı iş)
+    _attach_sizing(signals, settings, portfolio_value, invested_cost)
 
     # 4. Sheets loglama + performans
     logger.log_signals(signals)
