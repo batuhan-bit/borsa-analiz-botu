@@ -22,6 +22,9 @@ data_cache/
 backtest/results/
 *.log
 
+# --- Ara çıktı / scratchpad (oturum geçici dosyaları) ---
+scratchpad*
+
 # --- IDE / OS ---
 .vscode/
 .idea/
