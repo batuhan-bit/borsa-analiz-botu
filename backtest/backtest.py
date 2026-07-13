@@ -21,44 +21,24 @@ from __future__ import annotations
 import argparse
 import logging
 import math
-import pickle
-import time
 from dataclasses import dataclass, field
-from datetime import date
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
 from bot.config import ROOT, Settings
-from bot.data import YFinanceClient
 from bot.models import Basket
 from bot.risk.risk_manager import check_stop_loss
 from bot.signals.levels import price_levels
 from bot.signals.technical import indicator_frame, indicators_from_rows, technical_score
 
+from .benchmark import BenchmarkResult, benchmark_suite
+from .data import load_bars
+from .metrics import cagr_pct, calmar_ratio, max_drawdown_pct, sharpe_ratio
+
 log = logging.getLogger("backtest")
 
-BARS_CACHE_DIR = ROOT / "data_cache" / "backtest_bars"
 RESULTS_DIR = ROOT / "backtest" / "results"
-TRADING_DAYS_PER_YEAR = 252
-
-
-# ----------------------------------------------------------------------
-#  Veri (günlük cache'li — aynı gün tekrar çalıştırınca yeniden indirmez)
-# ----------------------------------------------------------------------
-def _load_bars(symbol: str, years: float) -> pd.DataFrame:
-    BARS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = BARS_CACHE_DIR / f"{symbol}_{years:g}y.pkl"
-    if cache_path.exists() and (time.time() - cache_path.stat().st_mtime) < 24 * 3600:
-        try:
-            return pickle.loads(cache_path.read_bytes())
-        except Exception:  # noqa: BLE001
-            pass
-    df = YFinanceClient().get_daily_bars(symbol, years=years)
-    if not df.empty:
-        cache_path.write_bytes(pickle.dumps(df))
-    return df
 
 
 def _build_signal_frame(
@@ -127,6 +107,8 @@ class BacktestResult:
     end: str
     target_quarterly_pct: float = 6.5
     benchmark_return_pct: Optional[float] = None
+    sharpe: float = 0.0
+    calmar: Optional[float] = None
     equity_curve: pd.Series = field(default=None, repr=False)
     trades: list[Trade] = field(default_factory=list, repr=False)
 
@@ -167,7 +149,7 @@ def run_backtest(
     sig_frames: dict[str, pd.DataFrame] = {}
     for basket, syms in universe.items():
         for sym in syms:
-            df = _load_bars(sym, years)
+            df = load_bars(sym, years=years)
             if df.empty or len(df) < tech_cfg["moving_averages"]["long"] + 5:
                 log.warning("Yetersiz veri, atlanıyor: %s", sym)
                 continue
@@ -276,12 +258,8 @@ def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: floa
     final = float(equity.iloc[-1]) if not equity.empty else initial
     total_return = (final / initial - 1) * 100.0
 
-    span_years = max((equity.index[-1] - equity.index[0]).days / 365.25, 1e-9) if len(equity) > 1 else years
-    annualized = ((final / initial) ** (1 / span_years) - 1) * 100.0 if final > 0 else -100.0
-
-    running_max = equity.cummax()
-    drawdown = (equity - running_max) / running_max
-    max_dd = float(drawdown.min() * 100.0) if not equity.empty else 0.0
+    annualized = cagr_pct(equity) if len(equity) > 1 else 0.0
+    max_dd = max_drawdown_pct(equity)
 
     closed = [t for t in trades if t.reason != "backtest_end"] or trades
     wins = [t for t in closed if t.pnl > 0]
@@ -305,6 +283,8 @@ def _metrics(equity: pd.Series, trades: list[Trade], initial: float, years: floa
         end=str(equity.index[-1].date()) if len(equity) else "-",
         target_quarterly_pct=target,
         benchmark_return_pct=round(benchmark, 2) if benchmark is not None else None,
+        sharpe=round(sharpe_ratio(equity), 2),
+        calmar=(lambda c: round(c, 2) if c is not None else None)(calmar_ratio(equity)),
         equity_curve=equity,
         trades=trades,
     )
@@ -320,6 +300,9 @@ def _print_report(r: BacktestResult) -> None:
     print(f"  Toplam getiri        : %{r.total_return_pct:+.2f}")
     print(f"  Yıllık getiri (CAGR) : %{r.annualized_return_pct:+.2f}")
     print(f"  Maks. düşüş (DD)     : %{r.max_drawdown_pct:.2f}")
+    print(f"  Sharpe (rf=0)        : {r.sharpe:.2f}")
+    if r.calmar is not None:
+        print(f"  Calmar               : {r.calmar:.2f}")
     print(f"  Kazanma oranı        : %{r.win_rate_pct:.1f}  ({r.num_trades} işlem)")
     if r.benchmark_return_pct is not None:
         print(f"  Benchmark (SPY al-tut): %{r.benchmark_return_pct:+.2f}")
@@ -331,6 +314,55 @@ def _print_report(r: BacktestResult) -> None:
     verdict = "ULAŞILDI ✓" if realized_q >= target else "ULAŞILAMADI ✗"
     print(f"  Gerçekleşen çeyreklik getiri: %{realized_q:+.2f}  (hedef %{target:g}) → {verdict}")
     print("=" * 56 + "\n")
+
+
+def comparison_rows(r: BacktestResult, benchmarks: list[BenchmarkResult]) -> list[dict]:
+    """Strateji + kıyas çizgilerini tek tablo satırları halinde döndür (Görev 1.1)."""
+    rows = [{
+        "name": "Strateji",
+        "total_return_pct": r.total_return_pct,
+        "annualized_return_pct": r.annualized_return_pct,
+        "max_drawdown_pct": r.max_drawdown_pct,
+        "sharpe": r.sharpe,
+        "calmar": r.calmar,
+    }]
+    for b in benchmarks:
+        rows.append({
+            "name": b.name,
+            "total_return_pct": b.total_return_pct,
+            "annualized_return_pct": b.annualized_return_pct,
+            "max_drawdown_pct": b.max_drawdown_pct,
+            "sharpe": b.sharpe,
+            "calmar": b.calmar,
+        })
+    return rows
+
+
+def _print_comparison(r: BacktestResult, benchmarks: list[BenchmarkResult]) -> None:
+    print("  KIYAS TABLOSU (aynı dönem, aynı evren, al-ve-tut)")
+    print("  " + "-" * 78)
+    print(f"  {'':32s} {'Toplam%':>9s} {'Yıllık%':>9s} {'MaksDD%':>9s} {'Sharpe':>7s} {'Calmar':>7s}")
+    for row in comparison_rows(r, benchmarks):
+        calmar = f"{row['calmar']:.2f}" if row["calmar"] is not None else "-"
+        print(f"  {row['name']:32s} {row['total_return_pct']:>+9.2f} "
+              f"{row['annualized_return_pct']:>+9.2f} {row['max_drawdown_pct']:>9.2f} "
+              f"{row['sharpe']:>7.2f} {calmar:>7s}")
+    # Alfa: stratejinin kıyas çizgilerine göre farkı (toplam getiri üzerinden)
+    for b in benchmarks:
+        alpha = r.total_return_pct - b.total_return_pct
+        print(f"  Alfa vs {b.name:41s}: {alpha:+.2f} puan")
+    print("  " + "-" * 78 + "\n")
+
+
+def run_benchmarks(settings: Settings, *, basket_limit: Optional[int] = None) -> list[BenchmarkResult]:
+    """Stratejiyle aynı dönem/veri için kıyas çizgilerini üret (Görev 1.1)."""
+    strat = settings.strategy
+    years = strat.backtest["lookback_years"]
+    initial = float(strat.backtest["initial_capital"])
+    symbols = {s for cfg in strat.baskets.values() for s in cfg.get("universe", [])}
+    symbols.add("SPY")
+    bars = {sym: load_bars(sym, years=years) for sym in sorted(symbols)}
+    return benchmark_suite(bars, strat.baskets, initial, basket_limit=basket_limit)
 
 
 def _save_results(r: BacktestResult) -> None:
@@ -351,11 +383,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Strateji backtest")
     parser.add_argument("--basket-limit", type=int, default=None,
                         help="Her sepetten en fazla N sembol (hızlı deneme için)")
+    parser.add_argument("--no-benchmark", action="store_true",
+                        help="Al-ve-tut kıyas tablosunu atla")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    result = run_backtest(basket_limit=args.basket_limit)
+    settings = Settings.load(strict=False)
+    result = run_backtest(settings, basket_limit=args.basket_limit)
     _print_report(result)
+    if not args.no_benchmark:
+        benchmarks = run_benchmarks(settings, basket_limit=args.basket_limit)
+        _print_comparison(result, benchmarks)
     _save_results(result)
 
 
