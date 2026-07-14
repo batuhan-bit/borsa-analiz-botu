@@ -157,6 +157,11 @@ class Strategy:
         """Rotasyon (v2) ayarları; yoksa boş sözlük."""
         return self.raw.get("rotation", {})
 
+    @property
+    def rotation_backtest(self) -> dict[str, Any]:
+        """Rotasyon backtest / ölçüm katmanı (Faz B) ayarları; yoksa boş sözlük."""
+        return self.raw.get("rotation_backtest", {})
+
     # --- Evren metadata erişimi (v2) ---
     @property
     def universe_symbols(self) -> list[str]:

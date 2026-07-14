@@ -114,3 +114,29 @@ def test_as_of_slices_history():
     assert ranker.rank(["UP"], as_of=early_date) == []
     # Yeterli tarih verilince skor üretilir
     assert ranker.rank(["UP"], as_of=frames["UP"].index[-1]) != []
+
+
+# ---------------- score_series (backtest paneli) ----------------
+
+def test_momentum_score_series_matches_rank_as_of():
+    """Vektörel momentum serisi, her tarihte rank(as_of) skoruyla birebir eşleşmeli.
+
+    Backtest paneli sıralamayı bu seriden okur; rank() ile tutarlı olmalı ki
+    canlı ve backtest aynı skoru görsün (Görev B.1 doğruluğu).
+    """
+    frames = {"UP": _trend_df(0.5, n=300)}
+    ranker = MomentumRanker(_strategy(momentum={"lookback_days": 126, "skip_days": 21}),
+                            _provider(frames))
+    series = ranker.score_series(frames["UP"])
+    for as_of in (frames["UP"].index[150], frames["UP"].index[200], frames["UP"].index[-1]):
+        expected = dict(ranker.rank(["UP"], as_of=as_of)).get("UP")
+        assert abs(series.loc[as_of] - expected) < 1e-9
+
+
+def test_technical_score_series_matches_rank_as_of():
+    frames = {"UP": _trend_df(0.5, n=300)}
+    ranker = TechnicalRanker(_strategy(), _provider(frames))
+    series = ranker.score_series(frames["UP"])
+    for as_of in (frames["UP"].index[210], frames["UP"].index[260], frames["UP"].index[-1]):
+        expected = dict(ranker.rank(["UP"], as_of=as_of)).get("UP")
+        assert abs(series.loc[as_of] - expected) < 1e-9

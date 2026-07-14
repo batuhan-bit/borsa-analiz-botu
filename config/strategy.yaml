@@ -122,7 +122,47 @@ notification:
   frequency: daily
   send_after_market_close: true
 
-# --- Backtesting ---
+# --- Backtesting (v1 eşik motoru) ---
 backtest:
   lookback_years: 3
   initial_capital: 3000
+
+# --- Rotasyon backtest ve ölçüm katmanı (Faz B) ---
+# İcra, maliyet, rejim anahtarı, dönem pencereleri ve pertürbasyon topluluğu.
+# Kod tarafında sabit değer yoktur; tüm sayılar buradan okunur (CLAUDE.md).
+rotation_backtest:
+  initial_capital: 3000
+  # İcra: rotasyon sinyali ayın ilk işlem günü KAPANIŞ verisiyle; icra ERTESİ
+  # işlem günü AÇILIŞ'tan (bak-önden-yok). execution_lag_days=1.
+  execution_lag_days: 1
+  # Maliyetler ilk günden. Komisyon (bps) + sepet-bazlı kayma (bps).
+  commission_bps: 5
+  commission_fixed_usd: 0        # Görev D.2'de 1.5 olur; standart koşuda 0
+  slippage_bps:                  # sepet-bazlı kayma
+    low_volatility: 5
+    high_volatility: 10
+    under_radar: 25
+  # Sermaye dağıtımı. Rejim anahtarı açıkken (aşağıda) risk-off'ta düşürülür.
+  deployment_pct: 100
+  # Rejim anahtarı hipotezi (Görev B.3): SPY, ma_days ortalamasının ALTINA
+  # kapanırsa dağıtım deployment_pct'ten regime.deployment_pct'e düşer; üstüne
+  # dönünce normale. v1'in hisse-bazlı filtresinden AYRI bir hipotezdir.
+  regime:
+    enabled: false
+    benchmark: SPY
+    ma_days: 200
+    deployment_pct: 50
+  # Dönem pencereleri (dönem ayrımı disiplini — CLAUDE.md, İHLAL EDİLEMEZ).
+  windows:
+    tune:     {start: 2016-01-01, end: 2019-12-31}
+    validate: {start: 2020-01-01, end: 2022-12-31}
+    final:    {start: 2023-01-01, end: 2026-12-31}
+  # Pertürbasyon topluluğu (Görev B.2): tekil sayı raporlanmaz.
+  ensemble:
+    runs: 50
+    start_jitter_days: 10        # başlangıç ±10 işlem günü (tekdüze)
+    slippage_jitter_pct: 50      # kayma ±%50 (çarpansal)
+    band_low_pct: 10             # rapor bandı alt yüzdelik
+    band_high_pct: 90            # rapor bandı üst yüzdelik
+    health_band_pct: 30          # bant genişliği medyanın ±%30'unu aşarsa uyarı
+    seed: 12345                  # determinizm: aynı tohum -> aynı topluluk
