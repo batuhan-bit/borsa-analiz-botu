@@ -28,6 +28,10 @@ POSITION_HEADERS = ["Sembol", "Sepet", "Giriş Tarihi", "Giriş Fiyatı", "Adet"
 PERFORMANCE_HEADERS = [
     "Tarih", "Portföy Değeri", "Açık Pozisyon", "Üretilen Sinyal", "Alış", "Satış", "Stop-Loss",
 ]
+# Cooldown durumu (Görev C.1): satış-uyarısıyla kapanan sembolün yeniden-giriş
+# beklemesi koşular arası kalıcı olsun (GitHub Actions stateless). Tarih çıpalı
+# saklanır (bkz. bot/rotation/cooldown_store.py).
+COOLDOWN_HEADERS = ["Sembol", "Uyarı Tarihi", "Bekleme (işlem günü)"]
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -138,6 +142,38 @@ class SheetsLogger:
                 "status": status or "OPEN",
             })
         return positions
+
+    # --- Cooldown durumu (Görev C.1 — koşular arası kalıcı) ---
+    def read_cooldown_state(self) -> dict[str, str]:
+        """'Cooldown' sekmesinden {sembol: uyarı_tarihi_iso} oku (yoksa {})."""
+        ws = self._worksheet("Cooldown", COOLDOWN_HEADERS)
+        if ws is None:
+            return {}
+        out: dict[str, str] = {}
+        for r in ws.get_all_records():
+            sym = str(r.get("Sembol", "")).strip().upper()
+            when = str(r.get("Uyarı Tarihi", "")).strip()
+            if sym and when:
+                out[sym] = when
+        return out
+
+    def write_cooldown_state(self, state: dict, cooldown_days: int) -> None:
+        """'Cooldown' sekmesini bekleyen sembollerle tamamen yeniden yaz.
+
+        state: {sembol: date/iso}. Tüm sekme temizlenip yeniden yazılır (yalnız
+        hâlâ bekleyen semboller tutulur — depo küçük kalır).
+        """
+        ws = self._worksheet("Cooldown", COOLDOWN_HEADERS)
+        if ws is None:
+            return
+        ws.clear()
+        rows = [COOLDOWN_HEADERS]
+        for sym in sorted(state):
+            d = state[sym]
+            iso = d.isoformat() if hasattr(d, "isoformat") else str(d)
+            rows.append([sym, iso, cooldown_days])
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        log.info("Cooldown durumu Sheets'e yazıldı (%d sembol).", len(state))
 
     def log_performance(self, snapshot: dict) -> None:
         """Günlük portföy performans anlık görüntüsünü 'Performans' sekmesine ekle."""

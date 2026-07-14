@@ -35,6 +35,14 @@ from .scoring import (
     TechnicalRanker,
     make_ranker,
 )
+from .calendar import is_rotation_day, rotation_days
+from .cooldown_store import (
+    CooldownStore,
+    InMemoryCooldownStore,
+    SheetsCooldownStore,
+    active_cooldown_dates,
+    reconstruct_cooldown,
+)
 from .sizing import SizedPosition, size_positions
 from .slots import (
     Observation,
@@ -75,4 +83,11 @@ __all__ = [
     "collapse_cutoff",
     "collapse_rank_map",
     "compute_atr",
+    "rotation_days",
+    "is_rotation_day",
+    "CooldownStore",
+    "InMemoryCooldownStore",
+    "SheetsCooldownStore",
+    "reconstruct_cooldown",
+    "active_cooldown_dates",
 ]
