@@ -1,0 +1,10 @@
+{
+  "phase": "validate",
+  "winner": {
+    "score": "s2_momentum",
+    "selection": "per_basket",
+    "top_n": 6,
+    "frequency": "biweekly",
+    "regime": false
+  }
+}
