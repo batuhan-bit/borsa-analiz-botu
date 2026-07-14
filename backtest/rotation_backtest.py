@@ -37,6 +37,7 @@ from bot.rotation.alerts import (
     RankingCollapseTracker,
     check_technical_emergency,
 )
+from bot.rotation.calendar import rotation_days as _rotation_days_for
 from bot.rotation.engine import RotationEngine
 from bot.rotation.scoring import make_ranker
 from bot.rotation.slots import slot_candidates
@@ -104,23 +105,12 @@ def _in_window(index: pd.DatetimeIndex, start, end) -> pd.DatetimeIndex:
 
 
 def _rotation_days(calendar: list[pd.Timestamp], frequency: str) -> set[pd.Timestamp]:
-    """Rotasyon sinyal günleri.
+    """Rotasyon sinyal günleri — canlı akışla ORTAK kural (bot.rotation.calendar).
 
-    monthly  : her ayın ilk işlem günü.
-    biweekly : her ayın ilk işlem günü + o ayda 15'inden sonraki ilk işlem günü.
+    Takvim zaten normalize (gün başı) Timestamp'lerden oluştuğu için ortak
+    fonksiyonun normalize çıktısı bu takvimin öğeleriyle birebir eşleşir.
     """
-    days: set[pd.Timestamp] = set()
-    seen_month: set[tuple[int, int]] = set()
-    seen_half: set[tuple[int, int]] = set()
-    for d in calendar:
-        key = (d.year, d.month)
-        if key not in seen_month:
-            seen_month.add(key)
-            days.add(d)
-        if frequency == "biweekly" and d.day >= 15 and key not in seen_half:
-            seen_half.add(key)
-            days.add(d)
-    return days
+    return _rotation_days_for(calendar, frequency)
 
 
 def _latest_at(series: pd.Series, day: pd.Timestamp) -> Optional[float]:
