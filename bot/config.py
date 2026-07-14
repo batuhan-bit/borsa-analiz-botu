@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 # Proje kök dizini (bu dosya bot/ altında)
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STRATEGY_PATH = ROOT / "config" / "strategy.yaml"
+DEFAULT_UNIVERSE_PATH = ROOT / "config" / "universe.yaml"
 
 # .env dosyasını yükle (varsa). GitHub Actions'ta env'ler zaten set olacağı
 # için dosya olmasa da sorun değil.
@@ -84,14 +85,43 @@ class Secrets:
 
 @dataclass(frozen=True)
 class Strategy:
-    """config/strategy.yaml içeriğini saran ince bir sarmalayıcı."""
+    """config/strategy.yaml + config/universe.yaml içeriğini saran sarmalayıcı.
+
+    Evren (sembol -> {basket, theme}) tek gerçek kaynağı universe.yaml'dır.
+    Yükleme sırasında her sepetin `universe` listesi bu dosyadan yeniden
+    doldurulur; böylece v1 sinyal motoru ve backtest (cfg["universe"] okuyan)
+    değişmeden çalışırken strategy.yaml'da yalnız strateji ağırlıkları kalır.
+    """
 
     raw: dict[str, Any] = field(default_factory=dict)
+    # symbol -> {"basket": str, "theme": str}
+    universe: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path | str = DEFAULT_STRATEGY_PATH) -> "Strategy":
+    def load(
+        cls,
+        path: Path | str = DEFAULT_STRATEGY_PATH,
+        universe_path: Path | str = DEFAULT_UNIVERSE_PATH,
+    ) -> "Strategy":
         with open(path, "r", encoding="utf-8") as f:
-            return cls(raw=yaml.safe_load(f))
+            raw = yaml.safe_load(f)
+
+        universe: dict[str, dict[str, str]] = {}
+        if Path(universe_path).exists():
+            with open(universe_path, "r", encoding="utf-8") as f:
+                udata = yaml.safe_load(f) or {}
+            universe = udata.get("symbols", {}) or {}
+
+        # Sepet başına sembol listesini universe.yaml'dan yeniden doldur
+        # (dosya sırası korunur). Sepet zaten `universe` içeriyorsa dokunma.
+        by_basket: dict[str, list[str]] = {}
+        for symbol, meta in universe.items():
+            by_basket.setdefault(meta["basket"], []).append(symbol)
+        for name, cfg in (raw.get("baskets") or {}).items():
+            if "universe" not in cfg:
+                cfg["universe"] = by_basket.get(name, [])
+
+        return cls(raw=raw, universe=universe)
 
     # Kolay erişim için kısayollar
     @property
@@ -121,6 +151,25 @@ class Strategy:
     @property
     def backtest(self) -> dict[str, Any]:
         return self.raw["backtest"]
+
+    @property
+    def rotation(self) -> dict[str, Any]:
+        """Rotasyon (v2) ayarları; yoksa boş sözlük."""
+        return self.raw.get("rotation", {})
+
+    # --- Evren metadata erişimi (v2) ---
+    @property
+    def universe_symbols(self) -> list[str]:
+        """Tüm evrendeki semboller (universe.yaml dosya sırasıyla)."""
+        return list(self.universe.keys())
+
+    def basket_of(self, symbol: str) -> str | None:
+        meta = self.universe.get(symbol)
+        return meta["basket"] if meta else None
+
+    def theme_of(self, symbol: str) -> str | None:
+        meta = self.universe.get(symbol)
+        return meta["theme"] if meta else None
 
 
 @dataclass(frozen=True)
