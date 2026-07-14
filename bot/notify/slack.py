@@ -75,6 +75,23 @@ def _alert_line(alert) -> str:
     return f"{head}\n      {reasons}"
 
 
+def _pct(v) -> str:
+    return f"%{v:+.2f}" if v is not None else "—"
+
+
+def _monthly_summary_lines(summary) -> list[str]:
+    """Aylık özet dict'ini tek satırlık karşılaştırmaya çevir (yoksa boş liste)."""
+    if not summary:
+        return []
+    lb = summary.get("lookback_days", 21)
+    return [
+        f"Son {lb} işlem günü — 📦 Portföy {_pct(summary.get('portfolio_pct'))} · "
+        f"🇺🇸 SPY {_pct(summary.get('spy_pct'))} · "
+        f"🌐 Evren al-tut {_pct(summary.get('universe_pct'))}",
+        "_Bilgi kolonu: 3 aylık getiri gürültüdür; hüküm 12. ayda (bkz. README)._",
+    ]
+
+
 def _chunk_sections(lines: list[str]) -> list[dict]:
     """Satırları 3000 karakter sınırına uyacak şekilde section bloklarına böl."""
     blocks: list[dict] = []
@@ -148,6 +165,11 @@ class SlackNotifier:
             # --- Slot doldurma (rotasyon-dışı gün) ---
             _titled_section(blocks, "*🟢 SLOT DOLDURMA ADAYLARI*",
                             [_buy_line(b) for b in decision.slot_fills])
+
+        # --- Aylık özet (portföy vs SPY vs evren al-tut) — varsa ---
+        summary_block = _monthly_summary_lines(decision.monthly_summary)
+        if summary_block:
+            _titled_section(blocks, "*🏁 AYLIK KARNE*", summary_block)
 
         # --- Günlük gözlem (eylemsiz) ---
         if decision.observation is not None:

@@ -27,6 +27,7 @@ from .config import Settings
 from .data import YFinanceClient
 from .logging import SheetsLogger
 from .notify import SlackNotifier
+from .reporting import entry_to_row, monthly_summary, update_karne
 from .rotation import run_live_flow
 from .rotation.cooldown_store import (
     SheetsCooldownStore,
@@ -117,6 +118,16 @@ def main() -> None:
         store.save(new_state)
         if decision.newly_cooled:
             log.info("Cooldown'a alınan (yeni): %s", ", ".join(sorted(decision.newly_cooled)))
+
+    # 5b. Karne (Görev C.2): yeni sinyaller + sistem-dışı pozisyonlar + ileri getiri
+    karne = update_karne(logger.read_karne(), decision, bars, holdings)
+    logger.write_karne([entry_to_row(e) for e in karne])
+
+    # 5c. Aylık özet (yalnız rotasyon günü) — portföy vs SPY vs evren al-tut
+    if decision.is_rotation_day:
+        decision.monthly_summary = monthly_summary(
+            bars, holdings, strategy.universe_symbols, decision.as_of)
+        log.info("Aylık özet: %s", decision.monthly_summary)
 
     _print_summary(decision)
 

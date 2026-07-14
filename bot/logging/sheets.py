@@ -32,6 +32,11 @@ PERFORMANCE_HEADERS = [
 # beklemesi koşular arası kalıcı olsun (GitHub Actions stateless). Tarih çıpalı
 # saklanır (bkz. bot/rotation/cooldown_store.py).
 COOLDOWN_HEADERS = ["Sembol", "Uyarı Tarihi", "Bekleme (işlem günü)"]
+# Karne (Görev C.2): sinyal takibi + 5/20/60g ileri getiri + sistem/sistem-dışı.
+KARNE_HEADERS = [
+    "Sinyal Tarihi", "Sembol", "Tür", "Kaynak", "Sinyal Fiyatı",
+    "5g Getiri %", "20g Getiri %", "60g Getiri %",
+]
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -174,6 +179,27 @@ class SheetsLogger:
             rows.append([sym, iso, cooldown_days])
         ws.append_rows(rows, value_input_option="USER_ENTERED")
         log.info("Cooldown durumu Sheets'e yazıldı (%d sembol).", len(state))
+
+    # --- Karne (Görev C.2 — sinyal takibi + ileri getiri, tam yeniden yazım) ---
+    def read_karne(self) -> list[dict]:
+        """'Karne' sekmesindeki tüm satırları ham sözlük olarak oku (yoksa [])."""
+        ws = self._worksheet("Karne", KARNE_HEADERS)
+        if ws is None:
+            return []
+        return list(ws.get_all_records())
+
+    def write_karne(self, rows: list[list]) -> None:
+        """'Karne' sekmesini başlık + verilen satırlarla tamamen yeniden yaz.
+
+        rows: her biri KARNE_HEADERS sırasında bir liste. İleri getiriler koşular
+        arası dolduğu için sekme her koşuda güncel değerlerle yeniden yazılır.
+        """
+        ws = self._worksheet("Karne", KARNE_HEADERS)
+        if ws is None:
+            return
+        ws.clear()
+        ws.append_rows([KARNE_HEADERS] + rows, value_input_option="USER_ENTERED")
+        log.info("Karne Sheets'e yazıldı (%d satır).", len(rows))
 
     def log_performance(self, snapshot: dict) -> None:
         """Günlük portföy performans anlık görüntüsünü 'Performans' sekmesine ekle."""

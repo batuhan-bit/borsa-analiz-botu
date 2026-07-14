@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from bot.notify import SlackNotifier
-from tests.slack_fixtures import rotation_decision, watch_decision
+from tests.slack_fixtures import rotation_decision, summary_decision, watch_decision
 
 SNAP = Path(__file__).resolve().parent / "snapshots"
 
@@ -38,6 +38,22 @@ def test_rotation_day_matches_snapshot():
 def test_watch_day_matches_snapshot():
     payload = SlackNotifier("http://x").format_message(watch_decision())
     assert payload == _golden("slack_watch_day")
+
+
+def test_monthly_summary_matches_snapshot():
+    payload = SlackNotifier("http://x").format_message(summary_decision())
+    assert payload == _golden("slack_monthly_summary")
+
+
+def test_monthly_summary_renders_portfolio_spy_universe():
+    blob = _texts(SlackNotifier("http://x").format_message(summary_decision()))
+    assert "AYLIK KARNE" in blob
+    assert "Portföy %+3.10" in blob and "SPY %+1.80" in blob and "Evren al-tut %+2.40" in blob
+
+
+def test_no_monthly_summary_block_when_absent():
+    blob = _texts(SlackNotifier("http://x").format_message(rotation_decision()))
+    assert "AYLIK KARNE" not in blob      # summary None -> blok yok (snapshot korunur)
 
 
 def test_rotation_message_has_entries_exits_and_money():

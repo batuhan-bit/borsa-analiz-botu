@@ -1,0 +1,136 @@
+{
+  "text": "📊 Günlük Rotasyon — 2026-07-01 — 🔄 ROTASYON GÜNÜ · 🚨 1 satış uyarısı · 🟢 1 giren · 🔴 1 çıkan",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "📊 Günlük Rotasyon — 2026-07-01",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🔄 ROTASYON GÜNÜ · 🚨 1 satış uyarısı · 🟢 1 giren · 🔴 1 çıkan"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*🚨 SATIŞ UYARILARI*"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🚨 *SMCI* (sıra #7)\n      • Sıralama #7 — ilk 6 dışına düştü (ay sonu beklenmez)"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*🟢 GİREN (önerilen)*"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🟢 *SPY* — 💰 2 adet ≈ $1,000.00 @ $500.00  _(sıra #1, Düşük Vol)_\n      yeni giren (sıra #1)"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*🔴 ÇIKAN (önerilen)*"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🔴 *SMCI*  _(Yüksek Vol)_\n      sıra düşüşü — hedef portföy dışı (güncel sıra #7)"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "⚪ *Kalan (2):* NVDA, AMD"
+        }
+      ]
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*⚖️ REBALANS (bant dışı)*"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "⚖️ *NVDA*: ↓ azalt — güncel %25 → hedef %18 (sapma %42.9)"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*🏁 AYLIK KARNE*"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "Son 21 işlem günü — 📦 Portföy %+3.10 · 🇺🇸 SPY %+1.80 · 🌐 Evren al-tut %+2.40\n_Bilgi kolonu: 3 aylık getiri gürültüdür; hüküm 12. ayda (bkz. README)._"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*📊 Günlük gözlem*\nℹ️ Bu bölüm bilgi amaçlıdır; eylem önerisi değildir.\n📈 Sırada yükselen (ilk-N dışı): IONQ (#12→#8)\n📌 Portföy sıraları: NVDA #2, AMD #3"
+      }
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "ℹ️ Bu öneriler bilgi amaçlıdır; alım-satımı kendiniz yürütürsünüz. Karar sizindir."
+        }
+      ]
+    }
+  ]
+}

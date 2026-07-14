@@ -31,6 +31,16 @@ def rotation_decision() -> LiveDecision:
     )
 
 
+def summary_decision() -> LiveDecision:
+    """Rotasyon günü + aylık karne özeti (Görev C.2 Slack yüzeyi)."""
+    d = rotation_decision()
+    d.monthly_summary = {
+        "as_of": "2026-07-01", "lookback_days": 21,
+        "portfolio_pct": 3.1, "spy_pct": 1.8, "universe_pct": 2.4,
+    }
+    return d
+
+
 def watch_decision() -> LiveDecision:
     return LiveDecision(
         as_of=date(2026, 7, 8), frequency="biweekly", is_rotation_day=False,

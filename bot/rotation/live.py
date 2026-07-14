@@ -103,6 +103,10 @@ class LiveDecision:
     rotation_holds: list[str] = field(default_factory=list)
     rebalance_notes: list[RebalanceNote] = field(default_factory=list)
     ranking: list[tuple[str, float]] = field(default_factory=list)
+    # Karne (Görev C.2) için: ilgili sembollerin sinyal-günü kapanış fiyatları.
+    prices: dict[str, float] = field(default_factory=dict)
+    # Aylık özet (portföy vs SPY vs evren al-tut); main rotasyon gününde doldurur.
+    monthly_summary: Optional[dict] = None
 
 
 # ----------------------------------------------------------------------
@@ -292,6 +296,15 @@ def run_live_flow(
     # --- 4) Günlük gözlem (her gün, eylemsiz) ---
     decision.observation = _build_observation(
         ranking_as_of, trimmed, today_index, held, top_n, observation_lookback)
+
+    # Karne (Görev C.2) için sinyal-günü fiyatları: ilgili tüm semboller
+    relevant = set(held) | {a.symbol for a in decision.sell_alerts}
+    relevant |= {b.symbol for b in decision.rotation_entries + decision.slot_fills}
+    relevant |= {e.symbol for e in decision.rotation_exits}
+    for sym in relevant:
+        px = last_close(sym, as_of_ts)
+        if px is not None:
+            decision.prices[sym] = round(px, 4)
     return decision
 
 
