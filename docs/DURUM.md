@@ -1,6 +1,6 @@
 # DURUM — Sinyal Botu v2
 
-> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-14** (FAZ B kodu + ping-pong churn teşhis/düzeltme + çöküş kalibrasyonu varsayılan güncellemesi).
+> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-15** (FAZ B kodu + ping-pong churn teşhis/düzeltme + çöküş kalibrasyonu varsayılan güncellemesi + B.3 aday tekilleştirme düzeltmesi + FAZ B koşuları tamamlandı + final rapora MaxDD/işlem/maliyet sütunları).
 > Aktif dal: `feature/rotation-v2` (main'e merge insan onayıyla).
 
 ## Dönem ayrımı disiplini (İHLAL EDİLEMEZ — CLAUDE.md)
@@ -149,21 +149,86 @@ varsayıyordu); yeni `_strat_with_multiple(2, ...)` yardımcısıyla config
 varsayılanından bağımsız hale getirildi — mekanizma testleri artık hangi
 sayı kalibre edilirse edilsin kırılmaz.
 
+## B.3 düzeltme: aday seçiminde etkin-konfigürasyon tekilleştirmesi · ✅ TAMAM
+
+Teşhis: `results/competition_candidates.json`'da seçilen 2 adayın ikisi de
+`s2_momentum·per_basket·N=6/8·biweekly·rejimK` idi — `selection=per_basket`
+iken `top_n` hiçbir yerde okunmuyor (pozisyon sayısını `positions_per_basket`
+belirler), yani bu iki ızgara noktası **aynı çalışan konfigürasyon**; aday
+listesinin bir slotu gerçekte tekrar eden bir noktaya gitmişti. Ayrıca
+"Seçilen adaylar" bölümündeki gerekçe metnine `render_report_md`'nin
+`### {label}` başlığı yapışıyordu (metin tekrarı).
+
+**Düzeltme (`backtest/competition.py`):** `GridPoint.effective_key` — kanonik
+kimlik, `per_basket`'te `top_n`'i hariç tutar. `select_candidates` artık bu
+anahtara göre tekilleştirir (en iyi sıralı olan tutulur); rapor satırı
+`render_report_md` başlığını tekrar etmeden yalnız medyan/bant yazar.
+Test: `tests/test_rotation_competition.py::test_select_candidates_dedupes_ineffective_top_n`;
+`test_max_candidates_caps_selection` `global_top_n`'e taşındı (top_n orada etkin).
+
+**Izgara yeniden koşulmadı** (deterministik, sonuçlar zaten `results/competition_tune.md`
+tablosunda) — mevcut tablo parse edilip düzeltilmiş `select_candidates` ile
+adaylar yeniden seçildi; `results/competition_candidates.json` ve
+`competition_tune.md` güncellendi. Yeni adaylar: `s2_momentum·per_basket·N=6·
+biweekly·rejimK` ve `...·rejimA` (önceki N=6/N=8 tekrarı yerine gerçekten
+farklı iki konfigürasyon). Bu, dönem ayrımı disiplinini ihlal etmez — tune
+penceresi sonuçlarına dokunulmadı, yalnız aynı pencereden aday çıkarma mantığı
+düzeltildi.
+
+## FAZ B koşuları tamamlandı (insan onayıyla) · ✅ TAMAM
+
+`python -m backtest.competition --phase tune|validate|final` sırasıyla insan
+onayıyla çalıştırıldı (dönem ayrımı disiplini korunarak, faz sınırı = commit
+sınırı):
+- **tune** (2016-2019): ızgara koşuldu, 2 aday seçildi (`results/competition_tune.md`,
+  `competition_candidates.json`).
+- **validate** (2020-2022): her aday BİR kez koşuldu; kazanan
+  `s2_momentum·per_basket·N=6·biweekly·rejimK` — SPY'ı topluluk-medyanında
+  geçti (`results/competition_validate.md`, `competition_winner.json`).
+- **final** (2023-2026): kazanan TEK konfig BİR kez koşuldu — Strateji
+  medyan **%+349.10** [%+323.76, %+370.93], SPY al-tut %+104.43
+  (`results/competition_final.md`). ⏸ Faz C kararı bu rapora bağlı, insan
+  değerlendirmesi bekliyor.
+
+### Final rapora MaxDD, işlem sayısı, toplam maliyet sütunları · ✅ TAMAM
+
+Talep: final raporunda getirinin yanında strateji + benchmark'lar için MaxDD
+(medyan+bant), strateji için işlem sayısı ve toplam maliyet görülsün.
+Tespit: bu değerler her ensemble koşusunda zaten hesaplanıyordu
+(`RotationBacktestResult.max_drawdown_pct/num_trades/total_cost`) ama
+`run_ensemble` yalnız `total_return_pct`'i tutup gerisini atıyordu — hiçbir
+ham koşu verisi diskte saklı değildi, yani mevcut kayıtlardan hesaplanamadı.
+
+**Değişiklik (`backtest/ensemble.py`):** her koşuda strateji için MaxDD/işlem/
+maliyet örneklemi toplanıyor (`strategy_maxdd/trades/cost`, medyan+bant);
+benchmark'lar (SPY al-tut, eşit-ağırlık, sepet-ağırlıklı) için de normalize
+fiyat eğrisinden (`_normalized_curve`/`_composite_curve`) MaxDD medyan+bant
+hesaplanıyor (`benchmark_maxdd`). `render_report_md` tabloya 3 yeni sütun
+ekledi; işlem/maliyet yalnız Strateji satırında (benchmark'larda "—" —
+gerçek işlem/maliyet modellenmiyor).
+
+Final penceresi kurala göre BİR kez koşulur; bu sütunları eklemek ham
+koşu verisi saklanmadığı için ikinci bir final koşusu gerektirdi — insan
+onayı alınarak çalıştırıldı. Sabit `seed` + aynı kazanan config nedeniyle
+getiri rakamları **birebir aynı** çıktı (%+349.10 vb., doğrulandı) — hiçbir
+karar/parametre değişmedi, yalnız ek ölçüm sütunu eklendi.
+
 ## Testler
-- **135 test yeşil** (120 → +15). Yeni: `tests/test_rotation_pingpong.py` (POWL
+- **140 test yeşil** (135 → +1 tekilleştirme + 4 MaxDD/işlem/maliyet).
+  Yeni: `tests/test_rotation_pingpong.py` (POWL
   2016-06 deseni regresyonu — aynı desen → en fazla bir çıkış, yeniden açılma
   cooldown'a takılır); `test_rotation_cooldown_unified.py` (KTOS teknik-acil →
   rotasyon-günü yeniden seçim engeli, gerçek fix'e karşı doğrulandı);
   `test_rotation_alerts.py`'ye taban hizalama + kalıcılık + cooldown birim
-  testleri; `test_rotation_slots.py`'ye cooldown-dışlama + ortak-taban.
+  testleri; `test_rotation_slots.py`'ye cooldown-dışlama + ortak-taban;
+  `test_rotation_ensemble.py`'ye MaxDD/işlem/maliyet toplama + render testleri.
 - FAZ A/B dosyaları: `tests/test_rotation_backtest.py`, `test_rotation_ensemble.py`,
   `test_rotation_competition.py`; `test_rotation_scoring.py` (`score_series`).
 - Çalıştırma: `python -m pytest -q`.
 
 ## Sıradaki
-- **İnsan kararı:** FAZ B koşularını başlatmak (yukarıdaki komutlar, disiplin sırasıyla).
-  ⏸ **FAZ B SONUNDA DUR** — nihai rapor insan değerlendirmesine sunulur; Faz C kararı
-  bu rapora bağlıdır (aday SPY'ı validate'te medyanda geçemezse Faz C'ye geçilmez).
+- **İnsan değerlendirmesi:** FAZ B tamamlandı, nihai rapor (`results/competition_final.md`)
+  hazır. ⏸ **FAZ B SONUNDA DUR** — Faz C (canlı akışa geçiş) kararı bu rapora bağlı.
 
 ## Notlar
 - `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu (ATR periyodu 14

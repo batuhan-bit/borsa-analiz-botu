@@ -58,6 +58,51 @@ def test_benchmarks_present():
         assert b.samples          # boş değil
 
 
+def test_strategy_maxdd_trades_cost_populated():
+    """MaxDD/işlem sayısı/toplam maliyet her koşu için toplanır (medyan+bant)."""
+    strat = _small_ensemble_strategy()
+    bars = _universe_bars()
+    rep = run_ensemble(strat, bars, start="2020-01-15", end="2020-08-01")
+    assert len(rep.strategy_maxdd.samples) == rep.runs
+    assert len(rep.strategy_trades.samples) == rep.runs
+    assert len(rep.strategy_cost.samples) == rep.runs
+    assert rep.strategy_maxdd.median <= 0.0          # düşüş her zaman <= 0
+    assert rep.strategy_trades.median >= 0
+    assert rep.strategy_cost.median >= 0.0
+
+
+def test_benchmark_maxdd_matches_benchmark_labels():
+    strat = _small_ensemble_strategy()
+    bars = _universe_bars()
+    rep = run_ensemble(strat, bars, start="2020-01-15", end="2020-08-01")
+    dd_labels = {b.label for b in rep.benchmark_maxdd}
+    assert dd_labels == {b.label for b in rep.benchmarks}
+    for b in rep.benchmark_maxdd:
+        assert b.samples
+        assert b.median <= 0.0
+
+
+def test_benchmark_maxdd_reflects_a_real_drawdown():
+    """Pencere ortasında çöken bir benchmark sembolü sıfırdan farklı MaxDD üretmeli."""
+    strat = _small_ensemble_strategy()
+    bars = _universe_bars()
+    bars["SPY"] = _bars(0.002, crash_at=60, crash_factor=0.7)
+    rep = run_ensemble(strat, bars, start="2020-01-15", end="2020-08-01")
+    spy_dd = next(b for b in rep.benchmark_maxdd if b.label == "SPY al-tut")
+    assert spy_dd.median < -10.0
+
+
+def test_render_report_md_includes_maxdd_trades_cost_columns():
+    strat = _small_ensemble_strategy()
+    bars = _universe_bars()
+    rep = run_ensemble(strat, bars, start="2020-01-15", end="2020-08-01")
+    md = render_report_md(rep)
+    header = next(line for line in md.splitlines() if "Seri" in line)
+    assert "MaxDD" in header
+    assert "İşlem sayısı" in header
+    assert "Toplam maliyet" in header
+
+
 def test_report_md_has_no_bandless_number():
     """Kabul kriteri: hiçbir tabloda bantsız getiri rakamı yok.
 

@@ -61,6 +61,10 @@ class EnsembleReport:
     health_ok: bool = True
     health_threshold: float = 0.0
     health_band_pct: int = 30
+    strategy_maxdd: Optional[EnsembleStats] = None
+    strategy_trades: Optional[EnsembleStats] = None
+    strategy_cost: Optional[EnsembleStats] = None
+    benchmark_maxdd: list[EnsembleStats] = field(default_factory=list)
 
     @property
     def health_note(self) -> str:
@@ -73,34 +77,71 @@ class EnsembleReport:
 # ----------------------------------------------------------------------
 #  Benchmark getirileri (al-tut; maliyetsiz — pertürbasyon yalnız başlangıç)
 # ----------------------------------------------------------------------
-def _buy_hold(df: pd.DataFrame, start, end) -> Optional[float]:
+def _normalized_curve(df: Optional[pd.DataFrame], start, end) -> Optional[pd.Series]:
+    """Kapanış fiyatını pencere başında 100'e endeksler (MaxDD için ortak taban)."""
     if df is None or df.empty:
         return None
     s = df["close"].loc[pd.Timestamp(start):pd.Timestamp(end)]
     if len(s) < 2 or s.iloc[0] <= 0:
         return None
-    return (s.iloc[-1] / s.iloc[0] - 1.0) * 100.0
+    return s / s.iloc[0] * 100.0
+
+
+def _max_dd_pct(curve: Optional[pd.Series]) -> Optional[float]:
+    if curve is None or curve.empty:
+        return None
+    running_max = curve.cummax()
+    dd = (curve - running_max) / running_max
+    return float(dd.min() * 100.0)
+
+
+def _composite_curve(curves: list[pd.Series]) -> Optional[pd.Series]:
+    """Birden çok normalize eğrinin gün-bazlı eşit ortalaması (hizalı takvim, ffill)."""
+    curves = [c for c in curves if c is not None]
+    if not curves:
+        return None
+    df = pd.concat(curves, axis=1).sort_index().ffill()
+    return df.mean(axis=1)
+
+
+def _buy_hold(df: pd.DataFrame, start, end) -> Optional[float]:
+    curve = _normalized_curve(df, start, end)
+    if curve is None:
+        return None
+    return float(curve.iloc[-1] - 100.0)
+
+
+def _equal_weight_curve(strategy: Strategy, bars: Mapping[str, pd.DataFrame], start, end) -> Optional[pd.Series]:
+    curves = [_normalized_curve(bars.get(s), start, end) for s in strategy.universe_symbols]
+    return _composite_curve(curves)
 
 
 def _equal_weight(strategy: Strategy, bars: Mapping[str, pd.DataFrame], start, end) -> Optional[float]:
-    rets = [_buy_hold(bars.get(s), start, end) for s in strategy.universe_symbols]
-    rets = [r for r in rets if r is not None]
-    return float(np.mean(rets)) if rets else None
+    curve = _equal_weight_curve(strategy, bars, start, end)
+    return float(curve.iloc[-1] - 100.0) if curve is not None else None
 
 
-def _basket_weight(strategy: Strategy, bars: Mapping[str, pd.DataFrame], start, end) -> Optional[float]:
-    total = 0.0
+def _basket_weight_curve(strategy: Strategy, bars: Mapping[str, pd.DataFrame], start, end) -> Optional[pd.Series]:
+    weighted: list[pd.Series] = []
     weight_sum = 0.0
     for name, cfg in strategy.baskets.items():
         syms = [s for s in strategy.universe_symbols if strategy.basket_of(s) == name]
-        rets = [_buy_hold(bars.get(s), start, end) for s in syms]
-        rets = [r for r in rets if r is not None]
-        if not rets:
+        curves = [_normalized_curve(bars.get(s), start, end) for s in syms]
+        basket_curve = _composite_curve(curves)
+        if basket_curve is None:
             continue
         alloc = cfg.get("allocation_pct", 0) / 100.0
-        total += alloc * float(np.mean(rets))
+        weighted.append(basket_curve * alloc)
         weight_sum += alloc
-    return total / weight_sum if weight_sum > 0 else None
+    if not weighted or weight_sum <= 0:
+        return None
+    df = pd.concat(weighted, axis=1).sort_index().ffill()
+    return df.sum(axis=1) / weight_sum
+
+
+def _basket_weight(strategy: Strategy, bars: Mapping[str, pd.DataFrame], start, end) -> Optional[float]:
+    curve = _basket_weight_curve(strategy, bars, start, end)
+    return float(curve.iloc[-1] - 100.0) if curve is not None else None
 
 
 # ----------------------------------------------------------------------
@@ -141,10 +182,17 @@ def run_ensemble(
 
     rng = np.random.default_rng(seed)
     strat_samples: list[float] = []
+    strat_dd_samples: list[float] = []
+    strat_trade_samples: list[float] = []
+    strat_cost_samples: list[float] = []
     bh_samples: list[float] = []
+    bh_dd_samples: list[float] = []
     ew_samples: list[float] = []
+    ew_dd_samples: list[float] = []
     bw_samples: list[float] = []
+    bw_dd_samples: list[float] = []
 
+    benchmark_symbol = strategy.rotation_backtest.get("regime", {}).get("benchmark", "SPY")
     for _ in range(runs):
         offset = int(rng.integers(-jitter_days, jitter_days + 1))
         slip_scale = float(rng.uniform(1.0 - slip_jitter, 1.0 + slip_jitter))
@@ -154,23 +202,33 @@ def run_ensemble(
         r = run_rotation_backtest(strategy, bars, start=run_start, end=end,
                                   apply_costs=True, slippage_scale=slip_scale)
         strat_samples.append(r.total_return_pct)
+        strat_dd_samples.append(r.max_drawdown_pct)
+        strat_trade_samples.append(float(r.num_trades))
+        strat_cost_samples.append(r.total_cost)
 
-        bh = _buy_hold(bars.get(strategy.rotation_backtest.get("regime", {}).get("benchmark", "SPY")),
-                       run_start, end)
-        if bh is not None:
-            bh_samples.append(bh)
-        ew = _equal_weight(strategy, bars, run_start, end)
-        if ew is not None:
-            ew_samples.append(ew)
-        bw = _basket_weight(strategy, bars, run_start, end)
-        if bw is not None:
-            bw_samples.append(bw)
+        bh_curve = _normalized_curve(bars.get(benchmark_symbol), run_start, end)
+        if bh_curve is not None:
+            bh_samples.append(float(bh_curve.iloc[-1] - 100.0))
+            bh_dd_samples.append(_max_dd_pct(bh_curve))
+        ew_curve = _equal_weight_curve(strategy, bars, run_start, end)
+        if ew_curve is not None:
+            ew_samples.append(float(ew_curve.iloc[-1] - 100.0))
+            ew_dd_samples.append(_max_dd_pct(ew_curve))
+        bw_curve = _basket_weight_curve(strategy, bars, run_start, end)
+        if bw_curve is not None:
+            bw_samples.append(float(bw_curve.iloc[-1] - 100.0))
+            bw_dd_samples.append(_max_dd_pct(bw_curve))
 
     strat_stats = EnsembleStats(config_label, strat_samples, band_low, band_high)
     benchmarks = [
         EnsembleStats("SPY al-tut", bh_samples, band_low, band_high),
         EnsembleStats("Eşit-ağırlık evren", ew_samples, band_low, band_high),
         EnsembleStats("Sepet-ağırlıklı evren", bw_samples, band_low, band_high),
+    ]
+    benchmark_maxdd = [
+        EnsembleStats("SPY al-tut", bh_dd_samples, band_low, band_high),
+        EnsembleStats("Eşit-ağırlık evren", ew_dd_samples, band_low, band_high),
+        EnsembleStats("Sepet-ağırlıklı evren", bw_dd_samples, band_low, band_high),
     ]
 
     # Tasarım sağlığı: bant genişliği medyanın ±health_pct'inden geniş mi?
@@ -181,6 +239,10 @@ def run_ensemble(
         config_label=config_label, window=(str(start), str(end)), runs=runs,
         strategy_stats=strat_stats, benchmarks=benchmarks,
         health_ok=health_ok, health_threshold=threshold, health_band_pct=health_pct,
+        strategy_maxdd=EnsembleStats(config_label, strat_dd_samples, band_low, band_high),
+        strategy_trades=EnsembleStats(config_label, strat_trade_samples, band_low, band_high),
+        strategy_cost=EnsembleStats(config_label, strat_cost_samples, band_low, band_high),
+        benchmark_maxdd=benchmark_maxdd,
     )
 
 
@@ -192,6 +254,24 @@ def _fmt(stats: EnsembleStats) -> str:
     return f"%{stats.median:+.2f}  [%{stats.p_low:+.2f}, %{stats.p_high:+.2f}]"
 
 
+def _fmt_dd(stats: Optional[EnsembleStats]) -> str:
+    if stats is None or not stats.samples:
+        return "—"
+    return f"%{stats.median:.2f}  [%{stats.p_low:.2f}, %{stats.p_high:.2f}]"
+
+
+def _fmt_count(stats: Optional[EnsembleStats]) -> str:
+    if stats is None or not stats.samples:
+        return "—"
+    return f"{stats.median:.0f}  [{stats.p_low:.0f}, {stats.p_high:.0f}]"
+
+
+def _fmt_cost(stats: Optional[EnsembleStats]) -> str:
+    if stats is None or not stats.samples:
+        return "—"
+    return f"${stats.median:,.2f}  [${stats.p_low:,.2f}, ${stats.p_high:,.2f}]"
+
+
 def render_report_md(report: EnsembleReport) -> str:
     lines: list[str] = []
     lines.append(f"### {report.config_label}")
@@ -200,11 +280,15 @@ def render_report_md(report: EnsembleReport) -> str:
                  f"({report.runs} koşuluk topluluk; bant [%{report.strategy_stats.band_low_pct}, "
                  f"%{report.strategy_stats.band_high_pct}])")
     lines.append("")
-    lines.append("| Seri | Getiri (medyan + bant) |")
-    lines.append("|------|------------------------|")
-    lines.append(f"| **Strateji** | {_fmt(report.strategy_stats)} |")
+    lines.append("| Seri | Getiri (medyan + bant) | MaxDD (medyan + bant) | "
+                 "İşlem sayısı (medyan + bant) | Toplam maliyet (medyan + bant) |")
+    lines.append("|------|------------------------|------------------------|"
+                 "------------------------------|--------------------------------|")
+    lines.append(f"| **Strateji** | {_fmt(report.strategy_stats)} | {_fmt_dd(report.strategy_maxdd)} | "
+                 f"{_fmt_count(report.strategy_trades)} | {_fmt_cost(report.strategy_cost)} |")
+    dd_by_label = {b.label: b for b in report.benchmark_maxdd}
     for b in report.benchmarks:
-        lines.append(f"| {b.label} | {_fmt(b)} |")
+        lines.append(f"| {b.label} | {_fmt(b)} | {_fmt_dd(dd_by_label.get(b.label))} | — | — |")
     lines.append("")
     lines.append(f"- Bant genişliği (p{report.strategy_stats.band_high_pct}−p"
                  f"{report.strategy_stats.band_low_pct}): "
