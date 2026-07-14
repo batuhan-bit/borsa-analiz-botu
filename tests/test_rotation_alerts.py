@@ -26,6 +26,14 @@ def _strat(**rotation_overrides) -> Strategy:
     return s
 
 
+def _strat_with_multiple(multiple: int, **rotation_overrides) -> Strategy:
+    """_strat + ranking_collapse_multiple override — mekanizma testleri config'in
+    kalibre edilmiş varsayılanından (strategy.yaml) bağımsız olsun diye izole eder."""
+    s = _strat(**rotation_overrides)
+    s.raw.setdefault("sell_alerts", {})["ranking_collapse_multiple"] = multiple
+    return s
+
+
 def _ranking(symbols: list[str]):
     """Sıralı sembol listesini azalan skorlu (symbol, skor) listesine çevir."""
     return [(s, 1.0 - i * 0.001) for i, s in enumerate(symbols)]
@@ -160,13 +168,16 @@ def test_engine_new_day_resets_via_new_engine():
 # ================= (1) TABAN HİZALAMA =================
 
 def test_collapse_cutoff_per_basket_uses_positions_per_basket():
-    s = _strat(selection="per_basket")
+    # multiple mekanizma testi -- config'in kalibre edilmiş varsayılanından
+    # (strategy.yaml: 3, bkz. results/diag_sensitivity_sweep.md) bağımsız olsun
+    # diye açıkça 2 verilir.
+    s = _strat_with_multiple(2, selection="per_basket")
     # ranking_collapse_multiple=2 × positions_per_basket=2 -> 4
     assert collapse_cutoff(s) == 2 * int(s.portfolio["positions_per_basket"])
 
 
 def test_collapse_cutoff_global_uses_top_n():
-    s = _strat(selection="global_top_n", top_n=6)
+    s = _strat_with_multiple(2, selection="global_top_n", top_n=6)
     assert collapse_cutoff(s) == 12   # 2×top_n (klasik küresel davranış korunur)
 
 
@@ -189,7 +200,7 @@ def test_collapse_rank_map_per_basket_is_within_basket():
 
 def test_ranking_collapse_requires_persist_days():
     """Çöküş eşiği ancak art arda N işlem günü aşılırsa tetiklenir."""
-    s = _strat(selection="per_basket")          # cutoff 4
+    s = _strat_with_multiple(2, selection="per_basket")  # cutoff 4 (mekanizma testi)
     ur = [x for x in s.universe_symbols if s.basket_of(x) == "under_radar"][:6]
     ranking = _ranking(ur)                       # ur[5] sepet-içi #6 (>4)
     tr = RankingCollapseTracker(s, persist_days=3)
@@ -203,7 +214,7 @@ def test_ranking_collapse_requires_persist_days():
 
 def test_persistence_resets_on_one_day_recovery():
     """Tek günlük toparlanma seriyi sıfırlar — gürültü birikmez."""
-    s = _strat(selection="per_basket")
+    s = _strat_with_multiple(2, selection="per_basket")  # cutoff 4 (mekanizma testi)
     ur = [x for x in s.universe_symbols if s.basket_of(x) == "under_radar"][:6]
     bad = _ranking(ur)                           # ur[5] #6 (>4)
     good = _ranking([ur[5]] + ur[:5])            # ur[5] sepet-içi #1 (<=4)
@@ -217,7 +228,7 @@ def test_persistence_resets_on_one_day_recovery():
 
 def test_dropped_symbol_streak_resets_on_reentry():
     """Portföyden çıkan sembol yeniden girince sayaç sıfırdan başlar."""
-    s = _strat(selection="per_basket")
+    s = _strat_with_multiple(2, selection="per_basket")  # cutoff 4 (mekanizma testi)
     ur = [x for x in s.universe_symbols if s.basket_of(x) == "under_radar"][:6]
     ranking = _ranking(ur)
     tr = RankingCollapseTracker(s, persist_days=3)

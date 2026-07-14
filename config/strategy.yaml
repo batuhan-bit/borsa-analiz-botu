@@ -91,9 +91,17 @@ signals:
 # Üç bağımsız tetik; aynı pozisyon için aynı tetik günde bir kez bildirilir.
 sell_alerts:
   atr_exit_multiple: 3.0            # fiyat girişten N×ATR aşağı düşerse teknik acil durum
-  ranking_collapse_multiple: 2      # eşik çarpanı: per_basket'te 2×positions_per_basket (sepet-içi), global_top_n'de 2×top_n (küresel)
   # Ping-pong (aç-kapa) koruması — teşhis: results/diag_1923_trades.md (churn'ün %92'si sıralama-çöküşü idi).
-  ranking_collapse_persist_days: 3  # çöküş eşiği ancak art arda N işlem günü aşılırsa tetiklenir; tek günlük gürültü uyarı üretmez (teknik acil tetik MUAF)
+  # multiple=3 + persist_days=5, results/diag_sensitivity_sweep.md'deki 4 noktalı
+  # ön-kalibrasyon taramasında (2016-2019 tune, churn kriteri) en düşük churn'ü
+  # verdi: 320 işlem / ayda 3.00 uyarı (ızgaradaki en düşük); mult=2,persist=3
+  # varsayılanına göre işlem sayısı 553→320, ranking_collapse 340→90,
+  # ayda-ortalama-uyarı 8.25→3.00. Seçim churn/uyarı-yoğunluğu kriterine göredir;
+  # getiri sayıları (tabloda da vardı) seçim gerekçesi OLARAK KULLANILMADI
+  # (bkz. sweep raporundaki dönem-ayrımı uyarısı) — yalnız tune penceresinde,
+  # yalnız churn ölçütüyle karar verildi.
+  ranking_collapse_multiple: 3      # eşik çarpanı: per_basket'te 3×positions_per_basket (sepet-içi), global_top_n'de 3×top_n (küresel)
+  ranking_collapse_persist_days: 5  # çöküş eşiği ancak art arda N işlem günü aşılırsa tetiklenir; tek günlük gürültü uyarı üretmez (teknik acil tetik MUAF)
   slot_refill_cooldown_days: 5      # uyarıyla kapanan sembol N işlem günü slot adayı olamaz — yapısal aç-kapa koruması
   fundamental:
     earnings_surprise_min_pct: -15  # kazanç sürprizi bu eşiğin altındaysa (kazanç çöküşü)
