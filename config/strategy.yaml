@@ -166,3 +166,12 @@ rotation_backtest:
     band_high_pct: 90            # rapor bandı üst yüzdelik
     health_band_pct: 30          # bant genişliği medyanın ±%30'unu aşarsa uyarı
     seed: 12345                  # determinizm: aynı tohum -> aynı topluluk
+  # Konfigürasyon yarışması (Görev B.3) — ızgara YALNIZ tune (2016-2019)'da koşulur.
+  competition:
+    grid:
+      score: [s1_technical, s2_momentum]
+      selection: [per_basket, global_top_n]
+      top_n: [6, 8]
+      frequency: [monthly, biweekly]
+      regime: [false, true]      # rejim anahtarı açık/kapalı
+    max_candidates: 2            # tune'dan en fazla bu kadar aday doğrulamaya geçer
