@@ -39,11 +39,16 @@ def slot_candidates(
     strategy: Strategy,
     holdings: Iterable[str],
     ranking: Sequence[tuple[str, float]],
+    *,
+    excluded: Iterable[str] = (),
 ) -> list[SlotCandidate]:
     """Boşalan slotlar için portföy dışı en yüksek uygun adayları öner.
 
     holdings: portföydeki açık pozisyon sembolleri.
     ranking : evren genelinde (symbol, skor) azalan sıralı liste (bir Ranker'dan).
+    excluded: bu koşuda aday OLAMAYACAK semboller (ör. AlertCooldown bekleme
+              süresindekiler) — uyarıyla yeni kapanan sembolün aynı gün yeniden
+              alınmasını (aç-kapa döngüsü) yapısal olarak engeller.
     Kısıtlar seçim moduna göre:
       - per_basket   : her sepet `positions_per_basket` pozisyon tutar; eksik
         sepetin slotları o sepetin en yüksek sıralı, portföy dışı sembolüyle önerilir.
@@ -51,6 +56,7 @@ def slot_candidates(
     Her iki modda da tema başına `max_positions_per_theme` sınırına saygı duyulur.
     """
     held = {s.strip().upper() for s in holdings}
+    blocked = {s.strip().upper() for s in excluded}
     rot = strategy.rotation
     mode = rot.get("selection", "per_basket")
     max_theme = int(rot.get("max_positions_per_theme", 2))
@@ -65,7 +71,8 @@ def slot_candidates(
     out: list[SlotCandidate] = []
 
     def _eligible(sym: str) -> bool:
-        return sym.upper() not in held and theme_counts.get(strategy.theme_of(sym), 0) < max_theme
+        return (sym.upper() not in held and sym.upper() not in blocked
+                and theme_counts.get(strategy.theme_of(sym), 0) < max_theme)
 
     if mode == "global_top_n":
         top_n = int(rot.get("top_n", 6))

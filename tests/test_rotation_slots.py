@@ -68,6 +68,32 @@ def test_slot_candidate_per_basket_skips_full_basket():
     assert low[:2] == ["PG", "KO"]
 
 
+def test_slot_candidates_excludes_cooldown_symbols():
+    """excluded (AlertCooldown bekleme) semboller aday olamaz — aç-kapa koruması."""
+    strat = _strategy(selection="per_basket")
+    # low_volatility'de JNJ açık, 1 slot boş. PG en yüksek aday ama cooldown'da.
+    ranking = [("PG", 0.9), ("JNJ", 0.8), ("KO", 0.7)]
+    cands = slot_candidates(strat, holdings=["JNJ"], ranking=ranking, excluded=["PG"])
+    low = [c.symbol for c in cands if c.basket == "low_volatility"]
+    assert "PG" not in low          # cooldown'da -> aday değil
+    assert low[0] == "KO"           # sıradaki uygun aday gelir
+
+
+def test_slot_candidates_same_base_as_collapse_per_basket():
+    """Slot adayı seçimi ile çöküş testi AYNI tabanı (sepet-içi sıra) kullanır."""
+    from bot.rotation.alerts import collapse_rank_map
+    strat = _strategy(selection="per_basket")
+    ur = [s for s in strat.universe_symbols if strat.basket_of(s) == "under_radar"][:3]
+    lv = [s for s in strat.universe_symbols if strat.basket_of(s) == "low_volatility"][:1]
+    # Küresel sıra: low_vol önce -> under_radar sembolleri küresel #2..#4, sepet-içi #1..#3
+    ranking = [(lv[0], 0.95)] + [(u, 0.9 - i * 0.01) for i, u in enumerate(ur)]
+    rmap = collapse_rank_map(strat, ranking)
+    assert rmap[ur[0]] == 1                       # çöküş testi: sepet-içi #1
+    cands = slot_candidates(strat, holdings=[lv[0]], ranking=ranking)
+    ur_c = [c.symbol for c in cands if c.basket == "under_radar"]
+    assert ur_c[0] == ur[0]                       # slot da sepet-içi #1'i önerir
+
+
 # ---------------- günlük gözlem ----------------
 
 def test_daily_observation_top_movers_outside_top_n():

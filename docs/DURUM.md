@@ -1,6 +1,6 @@
 # DURUM — Sinyal Botu v2
 
-> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-14** (FAZ B kodu).
+> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-14** (FAZ B kodu + ping-pong churn teşhis/düzeltme).
 > Aktif dal: `feature/rotation-v2` (main'e merge insan onayıyla).
 
 ## Dönem ayrımı disiplini (İHLAL EDİLEMEZ — CLAUDE.md)
@@ -63,10 +63,38 @@ python -m backtest.competition --phase final --i-understand-window-discipline
 ```
 Çıktılar `results/` altına md/json (commit'lenir; ham log/CSV değil).
 
+## Teşhis + düzeltme: 1923 işlem anomalisi (ping-pong churn) · ✅ TAMAM
+
+Teşhis (`results/diag_1923_trades.md`): 2016-2019 tune koşusu 1923 işlem üretti;
+%92'si `ranking_collapse` satışıydı, %93'ü slot-doldurma alışıydı. Kök neden:
+çöküş testi **küresel** sırayı (2×top_n = 12/60) kullanırken portföy/slot
+**per_basket sepet-içi** sıraya göre işliyordu → meşru tutulan pozisyon her gün
+"çökmüş" sayılıp satılıyor, boşalan slot yeniden doldruluyordu (aç-kapa döngüsü;
+POWL 177, KTOS 344 round-trip). Bant değil — bant yalnız 48 aylık günde kontrol
+ediliyor; churn günlük `alert_orders`'tan.
+
+Üç parçalı **yapısal** düzeltme (ortak modüller — backtest + Faz C canlı yol):
+| Parça | Nerede | Ne |
+|------|--------|----|
+| (1) Taban hizalama | `alerts.py` `collapse_cutoff`/`collapse_rank_map` | per_basket'te çöküş SEPET-İÇİ sıra + eşik `mult×positions_per_basket` (2×2=4); global_top_n'de küresel `mult×top_n` korunur. slot_candidates de aynı taban (testli). |
+| (2) Kalıcılık şartı | `alerts.py` `RankingCollapseTracker` | çöküş ancak art arda `ranking_collapse_persist_days` (3) işlem günü sürerse tetiklenir; tek-gün gürültü satmaz. **Teknik acil MUAF** (ilk günden tetikler). |
+| (3) Yeniden-giriş bekleme | `alerts.py` `AlertCooldown` + `slots.py` `excluded` | uyarıyla kapanan sembol `slot_refill_cooldown_days` (5) işlem günü slot adayı olamaz → günlük aç-kapa yapısal olarak imkânsız. |
+
+Backtest bağlandı (`backtest/rotation_backtest.py` `alert_orders`). Yeni config:
+`sell_alerts.ranking_collapse_persist_days`, `sell_alerts.slot_refill_cooldown_days`
+(hardcode yok). Doğrulama (aynı tune penceresi): işlem **1923→548**,
+ranking_collapse **1776→336**, ardışık-gün yeniden açılma **889→12** (kalan 12:
+aylık rebalans/technical, slot-fill churn değil), maliyet **$3.100→$1.093**.
+> Getiri sayıları yalnız mekanik düzelmeyi doğrular; varsayılanlar tune-getirisine
+> göre optimize edilmedi (dönem ayrımı korunur — konfig seçimi hâlâ B.3 fazlı).
+
 ## Testler
-- **120 test yeşil** (FAZ A: 100 → +20). Yeni dosyalar: `tests/test_rotation_backtest.py`,
-  `test_rotation_ensemble.py`, `test_rotation_competition.py`; `test_rotation_scoring.py`'ye
-  `score_series` tutarlılık testleri eklendi.
+- **133 test yeşil** (120 → +13). Yeni: `tests/test_rotation_pingpong.py` (POWL
+  2016-06 deseni regresyonu — aynı desen → en fazla bir çıkış, yeniden açılma
+  cooldown'a takılır); `test_rotation_alerts.py`'ye taban hizalama + kalıcılık +
+  cooldown birim testleri; `test_rotation_slots.py`'ye cooldown-dışlama + ortak-taban.
+- FAZ A/B dosyaları: `tests/test_rotation_backtest.py`, `test_rotation_ensemble.py`,
+  `test_rotation_competition.py`; `test_rotation_scoring.py` (`score_series`).
 - Çalıştırma: `python -m pytest -q`.
 
 ## Sıradaki

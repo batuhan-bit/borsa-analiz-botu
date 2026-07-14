@@ -32,7 +32,11 @@ from typing import Mapping, Optional
 import pandas as pd
 
 from bot.config import Strategy
-from bot.rotation.alerts import check_ranking_collapse, check_technical_emergency
+from bot.rotation.alerts import (
+    AlertCooldown,
+    RankingCollapseTracker,
+    check_technical_emergency,
+)
 from bot.rotation.engine import RotationEngine
 from bot.rotation.scoring import make_ranker
 from bot.rotation.slots import slot_candidates
@@ -175,8 +179,13 @@ def run_rotation_backtest(
     engine = RotationEngine(strategy)
     ranker = make_ranker(strategy, lambda s: bars.get(s, pd.DataFrame()))
     top_n = int(rot_cfg.get("top_n", 6))
-    collapse_mult = int(strategy.raw.get("sell_alerts", {}).get("ranking_collapse_multiple", 2))
     atr_mult = float(strategy.raw.get("sell_alerts", {}).get("atr_exit_multiple", 3.0))
+    # Ping-pong (aç-kapa) koruması — teşhis: results/diag_1923_trades.md.
+    #  - collapse_tracker: taban-hizalı (per_basket: sepet-içi) + kalıcılık şartlı
+    #    (art arda N işlem günü). Teknik acil tetik bu şarttan MUAF (aşağıda ayrı).
+    #  - cooldown: uyarıyla kapanan sembol N işlem günü slot adayı olamaz.
+    collapse_tracker = RankingCollapseTracker(strategy)
+    cooldown = AlertCooldown(strategy)
 
     universe = strategy.universe_symbols or [
         s for cfg in strategy.baskets.values() for s in cfg.get("universe", [])
@@ -372,34 +381,41 @@ def run_rotation_backtest(
             orders.append(("buy", sym, weights[sym], basket_of_target[sym]))
         return orders
 
-    def alert_orders(day: pd.Timestamp) -> list[tuple]:
-        """Rotasyon dışı gün: satış-uyarısı tetikleri + slot doldurma (ertesi açılış)."""
+    def alert_orders(day: pd.Timestamp, day_index: int) -> list[tuple]:
+        """Rotasyon dışı gün: satış-uyarısı tetikleri + slot doldurma (ertesi açılış).
+
+        - Teknik acil: ani fiyat olayı; kalıcılık şartından MUAF, ilk günden tetikler.
+        - Sıralama çöküşü: taban-hizalı + kalıcılık şartlı (collapse_tracker).
+        - Uyarıyla kapanan sembol cooldown'a alınır ve aynı gün (ve N gün) slot
+          adayı olamaz → aç-kapa döngüsü yapısal olarak kurulamaz.
+        """
         if not positions:
             return []
         ranking = ranking_as_of(day)
-        rank_map = {sym: i for i, (sym, _) in enumerate(ranking, start=1)}
+        # Kalıcılık şartını her alert gününde güncelle; çöküşü dolan semboller:
+        collapsed = collapse_tracker.update(ranking, list(positions.keys()))
         orders: list[tuple] = []
-        freed_baskets: list[str] = []
         for sym in list(positions.keys()):
             pos = positions[sym]
             px = last_close(sym, day)
             if px is None:
                 continue
             t1 = check_technical_emergency(pos.entry_price, px, pos.entry_atr, multiple=atr_mult)
-            t2 = check_ranking_collapse(rank_map.get(sym), top_n=top_n, multiple=collapse_mult)
             reason = None
             if t1:
-                reason = "technical_emergency"
-            elif t2:
-                reason = "ranking_collapse"
+                reason = "technical_emergency"      # MUAF: kalıcılık aranmaz
+            elif sym in collapsed:
+                reason = "ranking_collapse"         # taban-hizalı + N gün kalıcı
             if reason:
                 orders.append(("sell", sym, reason))
-                freed_baskets.append(pos.basket)
         if orders:
-            # Boşalan slotlar için aday(lar): satılacaklar hariç holdings üzerinden
             selling = {o[1] for o in orders}
+            # Kapanan sembolleri cooldown'a al; bu gün aday havuzundan dışla
+            for sym in selling:
+                cooldown.register(sym, day_index)
+            blocked = cooldown.blocked(day_index)
             remaining = [s for s in positions if s not in selling]
-            cands = slot_candidates(strategy, remaining, ranking)
+            cands = slot_candidates(strategy, remaining, ranking, excluded=blocked)
             # yalnız boşalan slot sayısı kadar aday; her biri hedef ağırlıkla alınır
             for c in cands[: len(orders)]:
                 w = _target_weight_for(strategy, engine, c.symbol)
@@ -407,7 +423,7 @@ def run_rotation_backtest(
         return orders
 
     # --- Ana döngü ---
-    for day in calendar:
+    for day_index, day in enumerate(calendar):
         execute_pending(day)                      # 1) dünün emirleri: bugünün açılışı
         # 2) MTM özsermaye (bugünün kapanışı)
         equity = cash + sum(
@@ -420,7 +436,7 @@ def run_rotation_backtest(
         if day in rotation_days:
             pending = rebalance_orders(day)
         else:
-            pending = alert_orders(day)
+            pending = alert_orders(day, day_index)
 
     # Kalan pozisyonları son gün kapanışından kapat
     last_day = calendar[-1]

@@ -91,7 +91,10 @@ signals:
 # Üç bağımsız tetik; aynı pozisyon için aynı tetik günde bir kez bildirilir.
 sell_alerts:
   atr_exit_multiple: 3.0            # fiyat girişten N×ATR aşağı düşerse teknik acil durum
-  ranking_collapse_multiple: 2      # güncel sırada 2×top_n dışına düşerse (pozisyon tezini kaybetti)
+  ranking_collapse_multiple: 2      # eşik çarpanı: per_basket'te 2×positions_per_basket (sepet-içi), global_top_n'de 2×top_n (küresel)
+  # Ping-pong (aç-kapa) koruması — teşhis: results/diag_1923_trades.md (churn'ün %92'si sıralama-çöküşü idi).
+  ranking_collapse_persist_days: 3  # çöküş eşiği ancak art arda N işlem günü aşılırsa tetiklenir; tek günlük gürültü uyarı üretmez (teknik acil tetik MUAF)
+  slot_refill_cooldown_days: 5      # uyarıyla kapanan sembol N işlem günü slot adayı olamaz — yapısal aç-kapa koruması
   fundamental:
     earnings_surprise_min_pct: -15  # kazanç sürprizi bu eşiğin altındaysa (kazanç çöküşü)
     revenue_growth_max: 0.0         # zarar (marj<0) + gelir daralması (büyüme<bu) BİRLİKTE
