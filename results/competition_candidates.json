@@ -1,0 +1,33 @@
+{
+  "phase": "tune",
+  "candidates": [
+    {
+      "score": "s2_momentum",
+      "selection": "per_basket",
+      "top_n": 6,
+      "frequency": "biweekly",
+      "regime": false,
+      "tune": {
+        "median": 282.68,
+        "p_low": 274.67,
+        "p_high": 290.42,
+        "band_width": 15.75,
+        "health_ok": true
+      }
+    },
+    {
+      "score": "s2_momentum",
+      "selection": "per_basket",
+      "top_n": 6,
+      "frequency": "biweekly",
+      "regime": true,
+      "tune": {
+        "median": 274.0,
+        "p_low": 262.29,
+        "p_high": 282.31,
+        "band_width": 20.02,
+        "health_ok": true
+      }
+    }
+  ]
+}

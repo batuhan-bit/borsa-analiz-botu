@@ -50,6 +50,18 @@ class GridPoint:
         return (f"{self.score}·{self.selection}·N={self.top_n}·{self.frequency}·"
                 f"rejim{'A' if self.regime else 'K'}")
 
+    @property
+    def effective_key(self) -> tuple:
+        """Kanonik konfigürasyon kimliği: etkisiz parametreler hariç.
+
+        `selection=per_basket` iken `top_n` hiçbir yere okunmaz (pozisyon sayısını
+        `positions_per_basket` belirler) — bu yüzden kimlikten çıkarılır. Aksi halde
+        yalnız top_n'i farklı iki ızgara noktası, aslında tek bir çalışan
+        konfigürasyon olduğu halde aday seçiminde iki ayrı aday gibi sayılırdı.
+        """
+        top_n = self.top_n if self.selection == "global_top_n" else None
+        return (self.score, self.selection, top_n, self.frequency, self.regime)
+
     def apply(self, base: Strategy) -> Strategy:
         """Bu ızgara noktasını uygulayan YENİ bir Strategy üret (base değişmez)."""
         raw = copy.deepcopy(base.raw)
@@ -113,6 +125,12 @@ def select_candidates(
 ) -> list[tuple[GridPoint, EnsembleReport]]:
     """Adayları seç: önce topluluk medyanı (yüksek), eşitlikte dar bant.
 
+    Etkin-konfigürasyon tekilleştirmesi: aynı `effective_key`'e sahip ızgara
+    noktaları (yalnız etkisiz bir parametrede — ör. per_basket'te top_n —
+    farklılaşanlar) tek aday sayılır; en iyi sıralı olan tutulur, geri kalanı
+    elenir. Böylece aday listesi gerçekte farklı davranan konfigürasyonlarla
+    doldurulur.
+
     Nihai insan kararına (rejim davranışı dahil) girdi olacak sıralamayı üretir;
     yapı EN FAZLA `max_candidates` aday döndürür (dönem ayrımı: fazla aday yasak).
     """
@@ -120,7 +138,15 @@ def select_candidates(
         ranked,
         key=lambda pr: (-pr[1].strategy_stats.median, pr[1].strategy_stats.band_width, pr[0].label),
     )
-    return order[:max_candidates]
+    seen: set[tuple] = set()
+    unique: list[tuple[GridPoint, EnsembleReport]] = []
+    for p, rep in order:
+        key = p.effective_key
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((p, rep))
+    return unique[:max_candidates]
 
 
 # ----------------------------------------------------------------------
@@ -212,8 +238,8 @@ def _phase_tune(base: Strategy, bars) -> None:
           render_grid_table(ranked), "",
           f"## Seçilen adaylar (en fazla {max_c})", ""]
     for p, rep in candidates:
-        md.append(f"- **{p.label}** — {render_report_md(rep).splitlines()[0]} "
-                  f"medyan %{rep.strategy_stats.median:+.2f}, bant %{rep.strategy_stats.band_width:.2f}")
+        md.append(f"- **{p.label}** — medyan %{rep.strategy_stats.median:+.2f}, "
+                  f"bant %{rep.strategy_stats.band_width:.2f}")
     _save_json("competition_candidates.json", {
         "phase": "tune",
         "candidates": [asdict(p) | {"tune": _stats_row(rep)} for p, rep in candidates],

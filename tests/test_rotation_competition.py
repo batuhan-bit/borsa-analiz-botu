@@ -72,10 +72,26 @@ def test_select_candidates_ranks_by_median_then_band():
 
 
 def test_max_candidates_caps_selection():
-    reps = [(GridPoint("s2_momentum", "per_basket", n, "monthly", False),
+    # global_top_n'de top_n etkin bir parametredir -> her nokta ayrı aday sayılır
+    reps = [(GridPoint("s2_momentum", "global_top_n", n, "monthly", False),
              EnsembleReport("c", ("s", "e"), 3, EnsembleStats("c", [float(n)], 10, 90)))
-            for n in range(10)]
+            for n in range(2, 10)]
     assert len(select_candidates(reps, max_candidates=2)) == 2
+
+
+def test_select_candidates_dedupes_ineffective_top_n():
+    """per_basket'te top_n etkisizdir: yalnız top_n farkıyla ayrışan noktalar
+
+    aynı etkin konfigürasyon sayılır ve aday listesinde bir kez yer alır.
+    """
+    def rep(median):
+        return EnsembleReport("c", ("s", "e"), 3, EnsembleStats("c", [median], 10, 90))
+    a = (GridPoint("s2_momentum", "per_basket", 6, "monthly", False), rep(20.0))
+    b = (GridPoint("s2_momentum", "per_basket", 8, "monthly", False), rep(20.0))   # aynı etkin config
+    c = (GridPoint("s1_technical", "per_basket", 6, "monthly", False), rep(10.0))
+    chosen = select_candidates([a, b, c], max_candidates=3)
+    assert [p.label for p, _ in chosen] == [a[0].label, c[0].label]
+    assert len(chosen) == 2
 
 
 def test_run_config_ensemble_on_tune_window():
