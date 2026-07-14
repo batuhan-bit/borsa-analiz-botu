@@ -1,7 +1,8 @@
 # DURUM — Sinyal Botu v2
 
-> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-15** (FAZ B kodu + ping-pong churn teşhis/düzeltme + çöküş kalibrasyonu varsayılan güncellemesi + B.3 aday tekilleştirme düzeltmesi + FAZ B koşuları tamamlandı + final rapora MaxDD/işlem/maliyet sütunları).
-> Aktif dal: `feature/rotation-v2` (main'e merge insan onayıyla).
+> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-15** (FAZ B tamam + **FAZ C canlı geçişi: C.1 + C.2 kod tamam**).
+> Aktif dal: `feature/live-switchover` (feature/rotation-v2'den; main'e merge insan onayıyla).
+> ⏸ **Gerçek Slack/Sheets'e karşı canlı deneme YAPILMADI** — insan onayı bekliyor.
 
 ## Dönem ayrımı disiplini (İHLAL EDİLEMEZ — CLAUDE.md)
 - Parametre ayarı/konfig seçimi YALNIZ **2016-2019** verisinde.
@@ -213,8 +214,44 @@ onayı alınarak çalıştırıldı. Sabit `seed` + aynı kazanan config nedeniy
 getiri rakamları **birebir aynı** çıktı (%+349.10 vb., doğrulandı) — hiçbir
 karar/parametre değişmedi, yalnız ek ölçüm sütunu eklendi.
 
+## FAZ C — Canlı entegrasyon · ✅ KOD TAMAM, ⏸ CANLI DENEME İNSAN ONAYINDA
+
+Dal `feature/live-switchover`; her görev ayrı commit; testler yeşil; Slack
+mesajları snapshot-testli. Bağlayıcı kararlar (kullanıcı) uygulandı:
+
+**Canlı konfig = Faz B kazananı** (`results/competition_winner.json`):
+`s2_momentum · per_basket · N=6 · biweekly · rejim KAPALI`. `strategy.yaml`
+canlı varsayılanları buna çekildi (score s1→s2, frequency monthly→biweekly);
+`tests/test_live_config.py` kazananla eşitliği koruyan dönem-ayrımı bekçisidir
+(kazanan parametresi yeniden doğrulama yapılmadan değişirse test kırılır).
+
+| Görev | Durum | Çıktı |
+|------|-------|-------|
+| C.1 Ritim | ✅ | `bot/rotation/calendar.py` — `rotation_days`/`is_rotation_day`; backtest + canlı ORTAK kural. Takvim gerçek işlem günlerinden kurulur → tatil/hafta sonu kayması bedava doğru (testli). |
+| C.1 Cooldown kalıcılığı | ✅ | `bot/rotation/cooldown_store.py` — GitHub Actions stateless; cooldown **tarih-çıpalı** saklanır (indeks değil → çekilen pencereden bağımsız), her koşu `reconstruct_cooldown` ile AYNI AlertCooldown'ı kurar. Sheets 'Cooldown' sekmesi; kapalıysa zarif düşüş. |
+| C.1 Canlı akış | ✅ | `bot/rotation/live.py` `run_live_flow` — TEK "bugün" için öneri (icra manuel). Backtest deseniyle birebir: TEK AlertCooldown + rank_fn enjeksiyonu. Her gün uyarı taraması + slot doldurma + gözlem; rotasyon günü ek olarak giren(+💰)/çıkan/kalan/rebalans. Çöküş kalıcılığı fiyat geçmişinden yeniden türetilir (ayrı depo yok). |
+| C.1 Slack v2 | ✅ | `bot/notify/slack.py` — v1 eşik BUY/SELL/HOLD biçimi TAMAMEN kaldırıldı; v2 rotasyon mesajı. Snapshot-testli (altın JSON `tests/snapshots/`). |
+| C.1 v1 emekliliği | ✅ | `bot/main.py` artık `run_live_flow` çağırır (v1 motoru DEĞİL). `bot/legacy_engine/` — v1 SignalEngine+stop silinmedi ama isimli emekli façade'a taşındı; hiçbir çalıştırma yolu çağırmaz. `daily.yml` v2'ye güncellendi (komut aynı). |
+| C.2 Karne | ✅ | `bot/reporting/scorecard.py` (saf) + Sheets 'Karne' sekmesi. Her öneri/uyarı sinyal tarihi+fiyatıyla; 5/20/60g ileri getiri elle müdahalesiz doldurulur (pencere kapandıkça). Aylık özet (portföy vs SPY vs evren al-tut) rotasyon gününde Slack'e. |
+| C.2 Sistem-dışı | ✅ | `reconcile_positions` — Pozisyonlar'daki, sistemin hiç önermediği elle işlemler `sistem-dışı` etiketlenir ve karnede ayrı satırda izlenir (testli). |
+
+### Cooldown kalıcılık tasarımı (kullanıcı "öner sonra uygula" dedi)
+Seçim: **Sheets-tabanlı, tarih-çıpalı.** Sheets zaten operasyonel durum deposu
+(Pozisyonlar/Performans); 'Cooldown' sekmesi eklemek repo yazma izni gerektirmez
+(`daily.yml` `contents: read` kalır), commit/push churn'ü ve concurrency çakışması
+yok. İndeks yerine **uyarı tarihi** saklanır: AlertCooldown'ın tam-sayı day_index'i
+çekilen geçmiş penceresine bağlı (kararsız); tarih ise değildir → her koşu takvimi
+kurup tarih→indeks çevirisiyle aynı nesneyi yeniden kurar.
+
+### ⚠️ Canlıya almadan önce (insan)
+- Gerçek Slack webhook + Google Sheets kimlikleri ile İLK canlı koşu insan
+  gözetiminde yapılmalı (bu oturumda YAPILMADI — kullanıcı talebi).
+- Temel kırmızı-bayrak tetiği canlıda şimdilik pasif (fundamentals boş geçiliyor);
+  A.3 makinesi hazır, veri sağlayıcı bağlanması ayrı bir adım.
+
 ## Testler
-- **140 test yeşil** (135 → +1 tekilleştirme + 4 MaxDD/işlem/maliyet).
+- **180 test yeşil** (140 → +40: live_config 2, calendar 7, cooldown_store 7,
+  live 9, scorecard 9, slack v2 +3, main_smoke 2, +1).
   Yeni: `tests/test_rotation_pingpong.py` (POWL
   2016-06 deseni regresyonu — aynı desen → en fazla bir çıkış, yeniden açılma
   cooldown'a takılır); `test_rotation_cooldown_unified.py` (KTOS teknik-acil →
@@ -227,8 +264,10 @@ karar/parametre değişmedi, yalnız ek ölçüm sütunu eklendi.
 - Çalıştırma: `python -m pytest -q`.
 
 ## Sıradaki
-- **İnsan değerlendirmesi:** FAZ B tamamlandı, nihai rapor (`results/competition_final.md`)
-  hazır. ⏸ **FAZ B SONUNDA DUR** — Faz C (canlı akışa geçiş) kararı bu rapora bağlı.
+- ⏸ **İNSAN ONAYI:** Faz C kod tamam ama gerçek Slack/Sheets'e karşı canlı deneme
+  YAPILMADI (kullanıcı talebi). İlk canlı koşu insan gözetiminde tetiklenmeli.
+- **Faz D** (README beklenti sözleşmesi + $1,000 küçük bütçe uyumu) — bkz. iş listesi.
+- Dal `feature/live-switchover` push'landı; main'e merge insan onayıyla.
 
 ## Notlar
 - `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu (ATR periyodu 14
