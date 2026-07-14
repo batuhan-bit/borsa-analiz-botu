@@ -1,6 +1,6 @@
 # DURUM — Sinyal Botu v2
 
-> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-14**.
+> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-14** (FAZ B kodu).
 > Aktif dal: `feature/rotation-v2` (main'e merge insan onayıyla).
 
 ## Dönem ayrımı disiplini (İHLAL EDİLEMEZ — CLAUDE.md)
@@ -34,20 +34,47 @@ v1 çalışma yoluna dokunulmadı (canlı akış hâlâ v1; legacy switchover FA
   max_positions_per_theme, momentum.{lookback_days, skip_days}.
 - `sell_alerts:` — atr_exit_multiple, ranking_collapse_multiple, fundamental.*.
 
+## FAZ B — Backtest ve ölçüm katmanı · ✅ KOD TAMAM, ⏸ KOŞU İNSAN ONAYINDA
+
+Tüm B.1/B.2/B.3 **makinesi + testleri** yazıldı; ayrı commit'ler, testler yeşil.
+Gerçek-veri koşusu (yfinance + uzun süre) YAPILMADI — validate/final pencerelerine
+bakmak geri döndürülemez ve dönem ayrımı disiplini gereği insan onayına tabidir.
+
+| Görev | Durum | Çıktı |
+|------|-------|-------|
+| B.1 Rotasyon backtest | ✅ kod | `backtest/rotation_backtest.py` — sinyal kapanışta / icra ertesi gün açılışta; komisyon bps + sabit + sepet-bazlı kayma; maliyetsiz/maliyetli fark; satış-uyarısı tetikleri (teknik acil / sıralama çöküşü) + slot doldurma; rejim anahtarı; kapsam raporu. Determinizm bit-bazında testli. `scoring.py`'ye `score_series` (as_of paneli; `rank()` ile birebir). |
+| B.2 Pertürbasyon topluluğu | ✅ kod | `backtest/ensemble.py` + `report_v2.py`. 50 koşu (başlangıç ±10g + kayma ±%50 çarpansal), medyan + [%10,%90] bandı; benchmark'lar SPY/eşit-ağırlık/sepet-ağırlıklı; tasarım sağlığı (bant > medyan±%30 → uyarı). `python -m backtest.report_v2` tek komut. Bantsız rakam yok (testli). |
+| B.3 Konfig yarışması | ✅ kod | `backtest/competition.py`. 32 nokta ızgara (skor·seçim·N·ritim·rejim); fazlı CLI `--phase tune\|validate\|final`; fazlar arası JSON devir; validate/final ağdan önce `--i-understand-window-discipline` ister; en fazla 2 aday → aday başına 1 koşu → SPY'ı medyanda geçen tek kazanan → final tek bakış. |
+
+### Yeni config blokları (`strategy.yaml`)
+- `rotation_backtest:` — initial_capital, execution_lag_days, commission_bps,
+  commission_fixed_usd, slippage_bps (sepet-bazlı), deployment_pct,
+  regime.{enabled, benchmark, ma_days, deployment_pct}, windows.{tune,validate,final},
+  ensemble.{runs, start_jitter_days, slippage_jitter_pct, band_*, health_band_pct, seed},
+  competition.{grid.*, max_candidates}.
+
+### Koşu komutları (insan tetikler — gerçek veri, uzun)
+```
+python -m backtest.rotation_backtest --start 2016-01-01 --end 2019-12-31   # tekil koşu
+python -m backtest.report_v2 --window tune                                  # topluluk raporu
+python -m backtest.competition --phase tune                                 # ızgara (2016-2019)
+python -m backtest.competition --phase validate --i-understand-window-discipline
+python -m backtest.competition --phase final --i-understand-window-discipline
+```
+Çıktılar `results/` altına md/json (commit'lenir; ham log/CSV değil).
+
 ## Testler
-- **100 test yeşil.** Yeni dosyalar: `tests/test_universe.py`,
-  `test_rotation_engine.py`, `test_rotation_scoring.py`,
-  `test_rotation_slots.py`, `test_rotation_alerts.py`.
+- **120 test yeşil** (FAZ A: 100 → +20). Yeni dosyalar: `tests/test_rotation_backtest.py`,
+  `test_rotation_ensemble.py`, `test_rotation_competition.py`; `test_rotation_scoring.py`'ye
+  `score_series` tutarlılık testleri eklendi.
 - Çalıştırma: `python -m pytest -q`.
 
-## Sıradaki: FAZ B — Backtest ve ölçüm katmanı
-Ayrı oturum (koşular uzun; ham log context'e alınmaz, sonuç `results/` md).
-- B.1 Rotasyon backtest'i (`backtest/rotation_backtest.py`) — ertesi-gün-açılış
-  dolgu, komisyon 5 bps + sepet-bazlı kayma, satış-uyarısı tetikleri dahil.
-- B.2 Pertürbasyon topluluğu (50 koşu, medyan + [%10,%90] bandı; bantsız rakam yok).
-- B.3 Konfig yarışması **YALNIZ 2016-2019**; en fazla 2 aday → 2020-2022 birer
-  doğrulama → tek kazanan → 2023-2026 nihai (bir kez). ⏸ **FAZ B SONUNDA DUR.**
+## Sıradaki
+- **İnsan kararı:** FAZ B koşularını başlatmak (yukarıdaki komutlar, disiplin sırasıyla).
+  ⏸ **FAZ B SONUNDA DUR** — nihai rapor insan değerlendirmesine sunulur; Faz C kararı
+  bu rapora bağlıdır (aday SPY'ı validate'te medyanda geçemezse Faz C'ye geçilmez).
 
 ## Notlar
-- `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu.
+- `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu (ATR periyodu 14
+  hariç — bu modüller arası yerleşik konvansiyon, ayarlanabilir parametre değil).
 - Her değişiklik sonrası test suite yeşil bırakıldı.
