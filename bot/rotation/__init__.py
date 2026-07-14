@@ -21,6 +21,14 @@ from .scoring import (
     make_ranker,
 )
 from .sizing import SizedPosition, size_positions
+from .slots import (
+    Observation,
+    RankMover,
+    SlotCandidate,
+    daily_observation,
+    render_observation_lines,
+    slot_candidates,
+)
 
 __all__ = [
     "RotationEngine",
@@ -33,4 +41,10 @@ __all__ = [
     "TechnicalRanker",
     "MomentumRanker",
     "make_ranker",
+    "SlotCandidate",
+    "slot_candidates",
+    "Observation",
+    "RankMover",
+    "daily_observation",
+    "render_observation_lines",
 ]
