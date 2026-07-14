@@ -1,21 +1,30 @@
-"""Slack Incoming Webhook bildirimi.
+"""Slack Incoming Webhook bildirimi — v2 rotasyon akışı (Görev C.1).
 
-Günde 1 kez, piyasa kapanışı sonrası üretilen sinyalleri okunabilir bir
-Slack mesajına (Block Kit) çevirip webhook'a gönderir.
+Günde 1 kez, piyasa kapanışı sonrası üretilen ROTASYON kararını (bot.rotation.live
+.LiveDecision) okunabilir bir Slack mesajına (Block Kit) çevirir. v1 eşik-tetiklemeli
+BUY/SELL/HOLD biçimi TAMAMEN kaldırılmıştır — bu mesajda v1 sinyali görünmez.
 
-Öncelik sırası: STOP_LOSS (acil satış) → BUY → SELL → HOLD (özet).
-Aksiyon gerektiren sinyaller tek tek listelenir; HOLD'lar tek satırda özetlenir.
+Mesaj yapısı:
+  - Başlık + özet (rotasyon günü mü, kaç satış uyarısı, kaç aday)
+  - Rotasyon günü: 🟢 giren (💰 tutar/adet) · 🔴 çıkan (gerekçe) · ⚪ kalan · rebalans
+  - Her gün: 🚨 satış uyarıları · (rotasyon-dışı) slot doldurma · 📊 günlük gözlem
+  - Manuel icra hatırlatması
 
-format_message ağdan bağımsız test edilebilir; send yalnızca POST yapar.
+format_message ağdan bağımsız test edilebilir (snapshot); send yalnızca POST yapar.
 """
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 import requests
 
-from ..models import Signal, SignalType
+from ..rotation.live import (
+    BuySuggestion,
+    ExitSuggestion,
+    LiveDecision,
+    RebalanceNote,
+)
+from ..rotation.slots import render_observation_lines
 
 log = logging.getLogger(__name__)
 
@@ -29,38 +38,41 @@ _BASKET_LABEL = {
     "under_radar": "Radar Altı",
 }
 
-_EMOJI = {
-    SignalType.STOP_LOSS: "🚨",
-    SignalType.BUY: "🟢",
-    SignalType.SELL: "🔴",
-    SignalType.HOLD: "⚪",
-}
+_MANUAL_REMINDER = "ℹ️ Bu öneriler bilgi amaçlıdır; alım-satımı kendiniz yürütürsünüz. Karar sizindir."
 
 
-def _basket_label(value: str) -> str:
-    return _BASKET_LABEL.get(value, value)
+def _basket_label(value) -> str:
+    return _BASKET_LABEL.get(value, value or "—")
 
 
-def _format_signal_line(sig: Signal) -> str:
-    reasons = "; ".join(sig.reasons) if sig.reasons else "-"
-    emoji = _EMOJI.get(sig.signal, "•")
-    line = (
-        f"{emoji} *{sig.symbol}*  ${sig.price:,.2f}  "
-        f"_(skor {sig.score:.2f}, {_basket_label(sig.basket.value)})_\n"
-        f"      {reasons}"
+def _rank_str(rank) -> str:
+    return f"#{rank}" if rank is not None else "#—"
+
+
+def _buy_line(b: BuySuggestion) -> str:
+    return (
+        f"🟢 *{b.symbol}* — 💰 {b.shares:g} adet ≈ ${b.value:,.2f} @ ${b.price:,.2f}  "
+        f"_(sıra {_rank_str(b.rank)}, {_basket_label(b.basket)})_\n"
+        f"      {b.reason}"
     )
-    # BUY için fiyat seviyeleri
-    lv = sig.levels
-    if lv:
-        rr = f" · R/R {lv['risk_reward']}" if lv.get("risk_reward") else ""
-        line += (
-            f"\n      🎯 Stop ${lv['stop']:,.2f} · Destek ${lv['support']:,.2f} · "
-            f"Hedef ${lv['target1']:,.2f} → ${lv['target2']:,.2f}{rr}"
-        )
-    # Önemli notlar (ayrı satır, vurgulu)
-    for note in sig.notes:
-        line += f"\n      {note}"
-    return line
+
+
+def _exit_line(e: ExitSuggestion) -> str:
+    return f"🔴 *{e.symbol}*  _({_basket_label(e.basket)})_\n      {e.reason}"
+
+
+def _rebalance_line(r: RebalanceNote) -> str:
+    arrow = "↑ ekle" if r.action == "ekle" else "↓ azalt"
+    return (
+        f"⚖️ *{r.symbol}*: {arrow} — güncel %{r.current_weight * 100:.0f} → "
+        f"hedef %{r.target_weight * 100:.0f} (sapma %{r.drift_pct:g})"
+    )
+
+
+def _alert_line(alert) -> str:
+    reasons = "\n      ".join(f"• {t.reason}" for t in alert.triggers)
+    head = f"🚨 *{alert.symbol}* (sıra {_rank_str(alert.current_rank)})"
+    return f"{head}\n      {reasons}"
 
 
 def _chunk_sections(lines: list[str]) -> list[dict]:
@@ -80,85 +92,88 @@ def _chunk_sections(lines: list[str]) -> list[dict]:
     return blocks
 
 
+def _titled_section(blocks: list[dict], title: str, lines: list[str]) -> None:
+    if not lines:
+        return
+    blocks.append({"type": "divider"})
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": title}})
+    blocks.extend(_chunk_sections(lines))
+
+
 class SlackNotifier:
     def __init__(self, webhook_url: str) -> None:
         self._webhook_url = webhook_url
 
-    def format_message(self, signals: list[Signal], *, on_date: date | None = None) -> dict:
-        """Sinyal listesini Slack mesaj gövdesine (blocks + fallback text) çevir."""
-        on_date = on_date or date.today()
-
-        by_type: dict[SignalType, list[Signal]] = {t: [] for t in SignalType}
-        for sig in signals:
-            by_type[sig.signal].append(sig)
-
-        counts = {t: len(by_type[t]) for t in SignalType}
-
-        header = f"📊 Günlük Borsa Analizi — {on_date.isoformat()}"
+    def format_message(self, decision: LiveDecision) -> dict:
+        """LiveDecision'ı Slack mesaj gövdesine (blocks + fallback text) çevir."""
+        day = decision.as_of.isoformat()
+        badge = "🔄 ROTASYON GÜNÜ" if decision.is_rotation_day else "👀 İzleme"
+        header = f"📊 Günlük Rotasyon — {day}"
         summary = (
-            f"🚨 {counts[SignalType.STOP_LOSS]} acil satış · "
-            f"🟢 {counts[SignalType.BUY]} alış · "
-            f"🔴 {counts[SignalType.SELL]} satış · "
-            f"⚪ {counts[SignalType.HOLD]} bekle"
+            f"{badge} · 🚨 {len(decision.sell_alerts)} satış uyarısı"
         )
+        if decision.is_rotation_day:
+            summary += (
+                f" · 🟢 {len(decision.rotation_entries)} giren"
+                f" · 🔴 {len(decision.rotation_exits)} çıkan"
+            )
+        else:
+            summary += f" · 🟢 {len(decision.slot_fills)} slot adayı"
 
         blocks: list[dict] = [
             {"type": "header", "text": {"type": "plain_text", "text": header, "emoji": True}},
             {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
         ]
 
-        # Aksiyon gerektiren kategoriler — öncelik sırasıyla, tek tek
-        section_titles = {
-            SignalType.STOP_LOSS: "*🚨 ACİL SATIŞ (stop-loss)*",
-            SignalType.BUY: "*🟢 ALIŞ SİNYALLERİ*",
-            SignalType.SELL: "*🔴 SATIŞ SİNYALLERİ*",
-        }
-        for stype, title in section_titles.items():
-            items = sorted(by_type[stype], key=lambda s: s.score, reverse=True)
-            if not items:
-                continue
-            blocks.append({"type": "divider"})
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": title}})
-            lines = [_format_signal_line(s) for s in items]
-            for block in _chunk_sections(lines):
-                blocks.append(block)
+        # --- Satış uyarıları (her gün, en öne) ---
+        _titled_section(blocks, "*🚨 SATIŞ UYARILARI*",
+                        [_alert_line(a) for a in decision.sell_alerts])
 
-        # HOLD'lar: tek satır özet (sembol listesi)
-        holds = by_type[SignalType.HOLD]
-        if holds:
-            symbols = ", ".join(s.symbol for s in holds)
-            blocks.append({"type": "divider"})
-            blocks.append({
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": f"⚪ *Bekle ({len(holds)}):* {symbols}"}],
-            })
+        # --- Rotasyon (yalnız rotasyon günü) ---
+        if decision.is_rotation_day:
+            _titled_section(blocks, "*🟢 GİREN (önerilen)*",
+                            [_buy_line(b) for b in decision.rotation_entries])
+            _titled_section(blocks, "*🔴 ÇIKAN (önerilen)*",
+                            [_exit_line(e) for e in decision.rotation_exits])
+            if decision.rotation_holds:
+                blocks.append({"type": "divider"})
+                blocks.append({"type": "context", "elements": [{
+                    "type": "mrkdwn",
+                    "text": f"⚪ *Kalan ({len(decision.rotation_holds)}):* "
+                            + ", ".join(decision.rotation_holds),
+                }]})
+            _titled_section(blocks, "*⚖️ REBALANS (bant dışı)*",
+                            [_rebalance_line(r) for r in decision.rebalance_notes])
+        else:
+            # --- Slot doldurma (rotasyon-dışı gün) ---
+            _titled_section(blocks, "*🟢 SLOT DOLDURMA ADAYLARI*",
+                            [_buy_line(b) for b in decision.slot_fills])
 
-        # Manuel işlem hatırlatması
-        blocks.append({
-            "type": "context",
-            "elements": [{
-                "type": "mrkdwn",
-                "text": "ℹ️ Bu sinyaller bilgi amaçlıdır; alım-satımı kendiniz yürütürsünüz.",
-            }],
-        })
+        # --- Günlük gözlem (eylemsiz) ---
+        if decision.observation is not None:
+            obs_lines = render_observation_lines(decision.observation)
+            if len(obs_lines) > 2:      # başlık + disclaimer'dan fazlası varsa
+                blocks.append({"type": "divider"})
+                blocks.extend(_chunk_sections(obs_lines))
+
+        # --- Manuel icra hatırlatması ---
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _MANUAL_REMINDER}]})
 
         # Blok sınırını aşarsak kırp
         if len(blocks) > _MAX_BLOCKS:
             blocks = blocks[:_MAX_BLOCKS]
-            blocks.append({
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": "… (mesaj kısaltıldı)"}],
-            })
+            blocks.append({"type": "context", "elements": [
+                {"type": "mrkdwn", "text": "… (mesaj kısaltıldı)"}]})
 
         return {"text": f"{header} — {summary}", "blocks": blocks}
 
-    def send(self, signals: list[Signal], *, on_date: date | None = None) -> None:
-        """Sinyalleri Slack webhook'una gönder."""
+    def send(self, decision: LiveDecision) -> None:
+        """Rotasyon kararını Slack webhook'una gönder."""
         if not self._webhook_url:
             log.warning("SLACK_WEBHOOK_URL boş — bildirim atlanıyor.")
             return
-        payload = self.format_message(signals, on_date=on_date)
+        payload = self.format_message(decision)
         resp = requests.post(self._webhook_url, json=payload, timeout=30)
         if resp.status_code != 200 or resp.text.strip().lower() != "ok":
             raise RuntimeError(f"Slack gönderimi başarısız: {resp.status_code} {resp.text[:200]}")
-        log.info("Slack bildirimi gönderildi (%d sinyal).", len(signals))
+        log.info("Slack rotasyon bildirimi gönderildi (%s).", decision.as_of.isoformat())

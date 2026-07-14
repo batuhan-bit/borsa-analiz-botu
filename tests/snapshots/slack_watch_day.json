@@ -1,0 +1,56 @@
+{
+  "text": "📊 Günlük Rotasyon — 2026-07-08 — 👀 İzleme · 🚨 0 satış uyarısı · 🟢 1 slot adayı",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "📊 Günlük Rotasyon — 2026-07-08",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "👀 İzleme · 🚨 0 satış uyarısı · 🟢 1 slot adayı"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*🟢 SLOT DOLDURMA ADAYLARI*"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🟢 *XLU* — 💰 12 adet ≈ $960.00 @ $80.00  _(sıra #4, Düşük Vol)_\n      boşalan low_volatility slotu için en yüksek uygun aday (sırada #4)"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*📊 Günlük gözlem*\nℹ️ Bu bölüm bilgi amaçlıdır; eylem önerisi değildir.\n📌 Portföy sıraları: SPY #1"
+      }
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "ℹ️ Bu öneriler bilgi amaçlıdır; alım-satımı kendiniz yürütürsünüz. Karar sizindir."
+        }
+      ]
+    }
+  ]
+}

@@ -1,4 +1,8 @@
-name: Günlük Borsa Analizi
+name: Günlük Rotasyon (v2)
+
+# FAZ C: bot.main artık v1 eşik motorunu DEĞİL v2 kesitsel momentum rotasyonunu
+# çalıştırır (bkz. bot.rotation.live, bot.legacy_engine). Komut değişmedi
+# (python -m bot.main); değişen main'in çağırdığı akıştır.
 
 on:
   schedule:

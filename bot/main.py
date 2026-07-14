@@ -1,12 +1,18 @@
-"""Uçtan uca giriş noktası — GitHub Actions bunu günlük çalıştırır.
+"""Uçtan uca giriş noktası — GitHub Actions (daily.yml) bunu günlük çalıştırır.
+
+FAZ C: v1 eşik motoru EMEKLİ (bkz. bot.legacy_engine). Bu akış artık v2 kesitsel
+momentum ROTASYONUNU çalıştırır — Faz B'nin doğrulanmış kazananı
+(results/competition_winner.json: s2_momentum · per_basket · N=6 · biweekly).
 
 Akış:
-  1. Konfigürasyonu yükle (sırlar + strateji)
-  2. Açık pozisyonları Sheets'ten oku
-  3. Sinyal motorunu çalıştır — SELL yalnızca portföydeki semboller için
-  4. Açık pozisyonlar için stop-loss kontrolü
-  5. Sinyalleri Google Sheets'e logla + performans anlık görüntüsü
-  6. Slack'e günlük bildirim gönder
+  1. Konfigürasyon + fiyat geçmişini yükle (yfinance, evren).
+  2. Açık pozisyonları Sheets'ten oku (icra manuel — yalnız okunur).
+  3. Cooldown durumunu Sheets'ten yükle → AlertCooldown'ı yeniden kur (koşular arası
+     kalıcı yeniden-giriş beklemesi; GitHub Actions stateless).
+  4. Günlük kararı üret (bot.rotation.live.run_live_flow): satış-uyarısı taraması +
+     slot doldurma + günlük gözlem; rotasyon günü ek olarak rotasyon önerisi.
+  5. Güncellenen cooldown durumunu Sheets'e geri yaz.
+  6. Slack'e v2 rotasyon bildirimi gönder.
 
 Kullanım:
     python -m bot.main
@@ -14,112 +20,108 @@ Kullanım:
 from __future__ import annotations
 
 import logging
-from datetime import date
+
+import pandas as pd
 
 from .config import Settings
+from .data import YFinanceClient
 from .logging import SheetsLogger
-from .models import Basket, SignalType
 from .notify import SlackNotifier
-from .risk.risk_manager import check_stop_loss
-from .signals import SignalEngine
+from .rotation import run_live_flow
+from .rotation.cooldown_store import (
+    SheetsCooldownStore,
+    active_cooldown_dates,
+    reconstruct_cooldown,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bot")
 
 
-def _safe_basket(value: str) -> Basket:
-    try:
-        return Basket(value)
-    except ValueError:
-        return Basket.LOW_VOLATILITY
+def _load_bars(strategy, years: float) -> dict[str, pd.DataFrame]:
+    """Evrendeki her sembol için günlük (ayarlı) barları yfinance'ten çek."""
+    yf = YFinanceClient()
+    bars: dict[str, pd.DataFrame] = {}
+    for sym in strategy.universe_symbols:
+        df = yf.get_daily_bars(sym, years=years)
+        if not df.empty:
+            bars[sym] = df
+    return bars
 
 
-def _stop_loss_signals(positions, engine, stop_loss_pct):
-    """Verilen açık pozisyonların fiyatlarını çek, stop-loss + portföy değeri hesapla.
-
-    Döndürür: (stop_loss_sinyalleri, portföy_değeri, açık_pozisyon_sayısı).
-    """
-    stop_signals = []
-    holdings_value = 0.0
-    for pos in positions:
-        price = engine.latest_price(pos["symbol"])
-        if price is None:
-            continue
-        if pos.get("shares"):
-            holdings_value += pos["shares"] * price
-        if pos.get("entry_price"):
-            sl = check_stop_loss(
-                pos["symbol"], _safe_basket(pos["basket"]),
-                pos["entry_price"], price, stop_loss_pct,
-            )
-            if sl is not None:
-                stop_signals.append(sl)
-    return stop_signals, holdings_value, len(positions)
+def _calendar(bars: dict[str, pd.DataFrame]) -> list[pd.Timestamp]:
+    if not bars:
+        return []
+    idx = pd.DatetimeIndex(sorted(set().union(*[set(df.index) for df in bars.values()])))
+    return list(idx)
 
 
-def _print_summary(signals) -> None:
-    """Sinyalleri konsola özetle (loglara ek görünürlük)."""
-    order = {SignalType.STOP_LOSS: 0, SignalType.BUY: 1, SignalType.SELL: 2, SignalType.HOLD: 3}
-    for sig in sorted(signals, key=lambda s: (order.get(s.signal, 9), -s.score)):
-        reasons = "; ".join(sig.reasons) if sig.reasons else "-"
-        print(f"  {sig.signal.value:9} {sig.symbol:6} [{sig.basket.value:15}] "
-              f"skor={sig.score:.2f} ${sig.price:.2f}  {reasons}")
-        lv = sig.levels
-        if lv:
-            rr = f" R/R={lv['risk_reward']}" if lv.get("risk_reward") else ""
-            print(f"            🎯 stop=${lv['stop']} destek=${lv['support']} "
-                  f"hedef=${lv['target1']}→${lv['target2']}{rr}")
-        for note in sig.notes:
-            print(f"            {note}")
+def _print_summary(decision) -> None:
+    """Kararı konsola özetle (loglara ek görünürlük)."""
+    print(f"\n📅 {decision.as_of} — "
+          f"{'ROTASYON GÜNÜ' if decision.is_rotation_day else 'izleme günü'}")
+    if decision.sell_alerts:
+        print(f"🚨 Satış uyarıları ({len(decision.sell_alerts)}):")
+        for a in decision.sell_alerts:
+            trs = "; ".join(t.reason for t in a.triggers)
+            print(f"   {a.symbol}: {trs}")
+    if decision.is_rotation_day:
+        print(f"🟢 Giren: {[b.symbol for b in decision.rotation_entries]}")
+        print(f"🔴 Çıkan: {[e.symbol for e in decision.rotation_exits]}")
+        print(f"⚪ Kalan: {decision.rotation_holds}")
+    else:
+        print(f"🟢 Slot adayları: {[b.symbol for b in decision.slot_fills]}")
 
 
 def main() -> None:
     settings = Settings.load(strict=True)
-    log.info("Bot başlatıldı. Hedef getiri: %%%s", settings.strategy.portfolio["target_return_pct"])
+    strategy = settings.strategy
+    log.info("Bot başlatıldı (v2 rotasyon). Konfig: %s · %s · N=%s · %s",
+             strategy.rotation.get("score"), strategy.rotation.get("selection"),
+             strategy.rotation.get("top_n"), strategy.rotation.get("frequency"))
 
     sec = settings.secrets
     log.info(
-        "Entegrasyonlar — Alpaca: %s | Alpha Vantage: %s | Google Sheets: %s",
-        "açık" if sec.alpaca_api_key else "KAPALI (yfinance'e düşülüyor)",
-        "açık" if sec.alpha_vantage_api_key else "KAPALI (yalnızca teknik)",
-        "açık" if sec.google_sheet_id else "KAPALI (loglama yok)",
+        "Entegrasyonlar — Slack: %s | Google Sheets: %s",
+        "açık" if sec.slack_webhook_url else "KAPALI",
+        "açık" if sec.google_sheet_id else "KAPALI (loglama/cooldown kalıcılığı yok)",
     )
 
-    engine = SignalEngine(settings)
-    logger = SheetsLogger(settings.secrets)
-    stop_loss_pct = settings.strategy.risk["position_stop_loss_pct"]
+    # 1. Fiyat geçmişi
+    years = float(strategy.rotation.get("live_history_years", 2))
+    bars = _load_bars(strategy, years)
+    log.info("%d/%d sembol yüklendi (%.0f yıl geçmiş).",
+             len(bars), len(strategy.universe_symbols), years)
 
-    # Açık pozisyonları bir kez oku — hem SELL filtresi hem stop-loss için
-    positions = logger.get_open_positions()
-    held_symbols = {str(p["symbol"]).strip().upper() for p in positions if p.get("symbol")}
-    if held_symbols:
-        log.info("Portföydeki semboller (SELL yalnızca bunlar için): %s", ", ".join(sorted(held_symbols)))
+    # 2. Açık pozisyonlar (Sheets — icra manuel, yalnız okunur)
+    logger = SheetsLogger(sec)
+    holdings = logger.get_open_positions()
+    if holdings:
+        log.info("Portföy (%d): %s", len(holdings),
+                 ", ".join(h["symbol"] for h in holdings))
 
-    # 2. Sinyal üretimi — SELL yalnızca portföydeki semboller için üretilir
-    signals = engine.run(held_symbols=held_symbols)
+    # 3. Cooldown durumu — koşular arası kalıcı; AlertCooldown'ı yeniden kur
+    cooldown_days = int(strategy.raw.get("sell_alerts", {}).get("slot_refill_cooldown_days", 5))
+    store = SheetsCooldownStore(logger, cooldown_days)
+    stored = store.load()
+    calendar = _calendar(bars)
+    cooldown = reconstruct_cooldown(strategy, stored, calendar)
 
-    # 3. Stop-loss kontrolü (açık pozisyonlar) — en öne alınır
-    stop_signals, portfolio_value, open_count = _stop_loss_signals(positions, engine, stop_loss_pct)
-    signals = stop_signals + signals
-    log.info("%d sinyal (%d stop-loss dahil).", len(signals), len(stop_signals))
+    # 4. Günlük karar (backtest ile aynı AlertCooldown + rank_fn deseni)
+    decision = run_live_flow(strategy, bars, holdings, cooldown)
 
-    # 4. Sheets loglama + performans
-    logger.log_signals(signals)
-    counts = {t: sum(1 for s in signals if s.signal is t) for t in SignalType}
-    logger.log_performance({
-        "date": date.today().isoformat(),
-        "portfolio_value": round(portfolio_value, 2),
-        "open_positions": open_count,
-        "signals": len(signals),
-        "buy": counts[SignalType.BUY],
-        "sell": counts[SignalType.SELL],
-        "stop_loss": counts[SignalType.STOP_LOSS],
-    })
+    # 5. Güncellenen cooldown durumunu geri yaz
+    if decision.today_index >= 0:
+        new_state = active_cooldown_dates(
+            cooldown, stored, decision.newly_cooled, decision.as_of, decision.today_index)
+        store.save(new_state)
+        if decision.newly_cooled:
+            log.info("Cooldown'a alınan (yeni): %s", ", ".join(sorted(decision.newly_cooled)))
 
-    _print_summary(signals)
+    _print_summary(decision)
 
-    # 5. Slack bildirimi (webhook yoksa güvenle atlanır)
-    SlackNotifier(settings.secrets.slack_webhook_url).send(signals)
+    # 6. Slack v2 rotasyon bildirimi (webhook yoksa güvenle atlanır)
+    SlackNotifier(sec.slack_webhook_url).send(decision)
 
 
 if __name__ == "__main__":

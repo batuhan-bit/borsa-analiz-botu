@@ -83,6 +83,10 @@ rotation:
   momentum:
     lookback_days: 126
     skip_days: 21
+  # Canlı akışın (bot.main) çekeceği fiyat geçmişi (yıl). Momentum skoru
+  # lookback+skip (~147 işlem günü) ister; 2 yıl bu + gözlem/çöküş-replay için
+  # güvenli marj. Yalnız veri-çekme operasyonel parametresi (sıralamayı değiştirmez).
+  live_history_years: 2
 
 # --- Sinyal kararı ---
 # Nihai skor [-1, 1] aralığında. Eşiklere göre BUY / SELL / HOLD.

@@ -92,6 +92,7 @@ class LiveDecision:
     as_of: date
     frequency: str
     is_rotation_day: bool
+    today_index: int = -1        # bugünün takvimdeki işlem-günü indeksi (cooldown persist için)
     sell_alerts: list[SellAlert] = field(default_factory=list)
     newly_cooled: set[str] = field(default_factory=set)
     slot_fills: list[BuySuggestion] = field(default_factory=list)
@@ -233,7 +234,7 @@ def run_live_flow(
 
     decision = LiveDecision(
         as_of=as_of_ts.date(), frequency=frequency, is_rotation_day=is_rot,
-        ranking=ranking_today,
+        today_index=today_index, ranking=ranking_today,
     )
 
     # --- 1) Satış-uyarısı taraması (her gün) ---
