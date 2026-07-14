@@ -88,11 +88,37 @@ aylık rebalans/technical, slot-fill churn değil), maliyet **$3.100→$1.093**.
 > Getiri sayıları yalnız mekanik düzelmeyi doğrular; varsayılanlar tune-getirisine
 > göre optimize edilmedi (dönem ayrımı korunur — konfig seçimi hâlâ B.3 fazlı).
 
+## Kompozisyon kontrolü (548 işlem) + cooldown tek doğruluk kaynağı · ✅ TAMAM
+
+Düzeltme sonrası doğrulama koşusu (`results/diag_548_check.md`, 2016-2019 tune):
+işlem sayısı düştü ama ranking_collapse payı hâlâ %61.3 (beklenen — üç meşru
+tetikten biri); en çok işlem gören sembollerde kalıntı yok (KTOS 344→17,
+POWL 177→11). Ancak **384 alert-çıkışın 14'ü**, `slot_refill_cooldown_days`
+sınırını (gap < 5 işlem günü) ihlal ediyordu — **hepsi rotasyon-icra gününde**.
+Kök neden: `AlertCooldown` yalnız `alert_orders`→`slot_candidates` çağrısında
+uygulanıyordu; aylık `rebalance_orders` (`engine.build_plan`) cooldown'dan
+habersizdi (gerçek örnek: KTOS 2017-08-01 technical_emergency → 2017-08-02
+rotasyon icrasında anında geri açılıyordu, gap=1).
+
+**Düzeltme (`backtest/rotation_backtest.py`):** `rank_fn_as_of` (rotasyon
+seçiminin TEK skor kaynağı) artık aynı `cooldown` nesnesini sorgular; bekleme
+süresindeki sembol skorlanmadan elenir → `engine.build_plan` onu asla hedef
+seçemez, sıradaki uygun aday otomatik alınır. `slot_candidates(excluded=...)`
+zaten aynı nesneyi kullanıyordu — artık **tek** `AlertCooldown` durumu hem
+rotasyon hem alert-günü doldurma yolunu besliyor (`day_index_of` haritası ile).
+
+Regresyon (`tests/test_rotation_cooldown_unified.py`): KTOS teknik-acil çıkışı
+→ ertesi rotasyon günü YENİDEN SEÇİLEMEMELİ (fix'siz koda karşı kırmızı
+olduğu doğrulandı, fix'li yeşil). IONQ'nun (cooldown'da olmayan tek diğer
+aday) normal seyrettiği ayrıca doğrulandı (yan etki yok).
+
 ## Testler
-- **133 test yeşil** (120 → +13). Yeni: `tests/test_rotation_pingpong.py` (POWL
+- **135 test yeşil** (120 → +15). Yeni: `tests/test_rotation_pingpong.py` (POWL
   2016-06 deseni regresyonu — aynı desen → en fazla bir çıkış, yeniden açılma
-  cooldown'a takılır); `test_rotation_alerts.py`'ye taban hizalama + kalıcılık +
-  cooldown birim testleri; `test_rotation_slots.py`'ye cooldown-dışlama + ortak-taban.
+  cooldown'a takılır); `test_rotation_cooldown_unified.py` (KTOS teknik-acil →
+  rotasyon-günü yeniden seçim engeli, gerçek fix'e karşı doğrulandı);
+  `test_rotation_alerts.py`'ye taban hizalama + kalıcılık + cooldown birim
+  testleri; `test_rotation_slots.py`'ye cooldown-dışlama + ortak-taban.
 - FAZ A/B dosyaları: `tests/test_rotation_backtest.py`, `test_rotation_ensemble.py`,
   `test_rotation_competition.py`; `test_rotation_scoring.py` (`score_series`).
 - Çalıştırma: `python -m pytest -q`.

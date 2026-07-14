@@ -180,10 +180,14 @@ def run_rotation_backtest(
     ranker = make_ranker(strategy, lambda s: bars.get(s, pd.DataFrame()))
     top_n = int(rot_cfg.get("top_n", 6))
     atr_mult = float(strategy.raw.get("sell_alerts", {}).get("atr_exit_multiple", 3.0))
-    # Ping-pong (aç-kapa) koruması — teşhis: results/diag_1923_trades.md.
+    # Ping-pong (aç-kapa) koruması — teşhis: results/diag_1923_trades.md,
+    # results/diag_548_check.md.
     #  - collapse_tracker: taban-hizalı (per_basket: sepet-içi) + kalıcılık şartlı
     #    (art arda N işlem günü). Teknik acil tetik bu şarttan MUAF (aşağıda ayrı).
-    #  - cooldown: uyarıyla kapanan sembol N işlem günü slot adayı olamaz.
+    #  - cooldown: TEK doğruluk kaynağı — uyarıyla kapanan sembol N işlem günü
+    #    HİÇBİR yolda (rotasyon günü DAHİL) yeniden seçilemez. `rank_fn_as_of`
+    #    (rotasyon seçimi) ve `slot_candidates` (alert-günü doldurma) aynı
+    #    `cooldown` nesnesini sorgular — iki ayrı kopya/durum yok.
     collapse_tracker = RankingCollapseTracker(strategy)
     cooldown = AlertCooldown(strategy)
 
@@ -219,6 +223,7 @@ def run_rotation_backtest(
     if not calendar:
         return _empty_result(strategy, initial, apply_costs, universe)
     rotation_days = _rotation_days(calendar, frequency)
+    day_index_of = {d: i for i, d in enumerate(calendar)}
 
     # --- Portföy durumu ---
     cash = initial
@@ -257,9 +262,20 @@ def run_rotation_backtest(
         return sorted(scored, key=lambda x: (-x[1], x[0]))
 
     def rank_fn_as_of(day: pd.Timestamp):
+        """Rotasyon günü seçimi için skor kaynağı — AlertCooldown TEK doğruluk
+        kaynağıdır: bekleme süresindeki semboller burada elenir, böylece
+        `engine.build_plan` (per_basket/global_top_n) onları asla hedef olarak
+        SEÇEMEZ; sıradaki uygun aday otomatik alınır (Görev A — bkz.
+        results/diag_548_check.md, rotasyon günü cooldown'u atlıyordu).
+        """
+        idx = day_index_of.get(day)
+        blocked = cooldown.blocked(idx) if idx is not None else set()
+
         def fn(symbols):
             out = []
             for s in symbols:
+                if s in blocked:
+                    continue
                 series = score_panel.get(s)
                 if series is None:
                     continue
