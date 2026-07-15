@@ -5,14 +5,11 @@ name: Günlük Rotasyon (v2)
 # (python -m bot.main); değişen main'in çağırdığı akıştır.
 
 on:
-  # CANLI TETİK GÜVENE ALINDI (Faz D): otomatik cron zamanlaması DEVRE DIŞI.
-  # Bu dal main'e merge edilince denetimsiz bir canlı koşu tetiklenmesin diye
-  # yalnız ELLE tetik (workflow_dispatch) bırakıldı. İLK gerçek canlı koşu insan
-  # tarafından, gözetimli tetiklenecek (bkz. docs/DURUM.md — canlı deneme insan
-  # onayında). Cron'u yeniden açmak bilinçli bir insan kararıdır:
-  #   schedule:
-  #     - cron: "0 22 * * 1-5"   # 22:00 UTC hafta içi (ABD kapanışı sonrası)
-  workflow_dispatch: {}   # yalnız elle tetikleme (gözetimli canlı koşu)
+  # CANLI TETİK ETKİN (bilinçli insan kararı): otomatik cron yeniden açıldı.
+  # 22:00 UTC hafta içi (ABD kapanışı sonrası) otomatik koşu + elle tetik.
+  schedule:
+    - cron: "0 22 * * 1-5"   # 22:00 UTC hafta içi (ABD kapanışı sonrası)
+  workflow_dispatch: {}   # elle tetikleme de korunur (gözetimli canlı koşu)
 
 # Yalnızca repo içeriğini okuması yeterli (least-privilege).
 permissions:
