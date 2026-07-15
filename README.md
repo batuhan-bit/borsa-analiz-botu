@@ -27,6 +27,67 @@ verisi (Alpha Vantage) + bağımsız web duygusu (Marketaux, ücretsiz opsiyonel
 Tüm strateji parametreleri [`config/strategy.yaml`](config/strategy.yaml) içinde;
 kod değişmeden ayarlanabilir.
 
+## Beklentiler ve Devreye Alma
+
+> Bu bölüm, **v2 kesitsel momentum rotasyonunun** canlıya alınma sözleşmesidir
+> (Faz D). Yukarıdaki "Strateji Özeti" tablosundaki *3 ayda %6.5* rakamı v1'den
+> kalma bir hedeftir ve **bu ürünün vaadi DEĞİLDİR** — dürüst beklenti aşağıdadır.
+
+### Zaman ufku ve dürüst beklenti
+
+- **Minimum bağlılık: 12 ay.** Adil değerlendirme için **3 yıl** gerekir.
+  **İlk çeyrek istatistiksel gürültüdür** ve tek başına hiçbir karara dayanak olmaz.
+- **Beklenti çıpası backtest DEĞİLDİR.** Evren survivorship/hindsight bias içerir
+  (bugün öne çıkan hisselerden kurulu); mutlak backtest getirileri (ör. final
+  penceresi medyan %+349) **şişkin okunmalıdır**. Gerçekçi çıpa uzun vadeli hisse
+  ortalaması **~%10/yıl**'dır. Bu sınıf stratejide **−%25–35 düşüşler normaldir**.
+- **Maliyet sürüklemesi bilerek üstlenilir.** $1.000 başlangıçta yıllık toplam
+  maliyet / ortalama sermaye oranı medyan **~%14.7/yıl**'dır ($3.000'de ~%3.7);
+  fark, işlem başına $1.50 sabit ücretin küçük pozisyonda (~$125–200) oransal
+  büyümesinden gelir (kaynak: [`results/small_budget_1000.md`](results/small_budget_1000.md), Görev D.2).
+
+### Başarı kıstası (performans hükmü — yalnız 12. ay)
+
+- Yuvarlanan **12 aylık getiri ≥ SPY** **VE** maksimum düşüş **≤ 1.5×SPY düşüşü**.
+- **Evren al-tut** her raporda bir bilgi kolonu olarak gösterilir (çıpa değil, bağlam).
+- **12. ayda takvimli gözden geçirme:** *devam / revize / durdur*.
+
+### Düşük bütçeli canlı dönem ($1.000, 3 ay)
+
+- **$1.000 başlangıç**, ilk **3 ay boyunca nakit girişi yok**. Bu tutar kullanıcı
+  tarafından **tamamen kaybedilebilir risk sermayesi** olarak tanımlanmıştır.
+- **3. ay kapısının ölçütleri OPERASYONELDİR, performans DEĞİLDİR.** 3 aylık getiri
+  gürültüdür; nakit-artırma kararına tek başına dayanak yapılmaz. Kontrol edilenler:
+  - Karne elle **müdahalesiz doluyor mu** (5/20/60g ileri getiri otomatik).
+  - **Gerçekleşen maliyet vs D.2 tahmini** (~%14.7/yıl oranından sapma raporlanır).
+  - **Öneri → icra gecikmesi** (sinyal ile elle işlem arasındaki gün).
+  - **Sistem-dışı işlem sayısı** (hedef **0** — sistemin önermediği elle işlemler).
+  - **Satış uyarılarının işlerliği** (tetikler zamanında ve doğru geliyor mu).
+- **Performans hükmü yalnız 12. ayda**, yukarıdaki mutabık kıstasla verilir.
+
+### Canlı sistemin bilinen iki sınırlaması
+
+- **(a) Temel kırmızı-bayrak satış tetiği canlıda şu an UYKUDA.** Yalnız **teknik
+  acil** + **sıralama çöküşü** tetikleri aktiftir; kazanç/haber/içeriden-satış
+  temelli çıkış makinesi (A.3) hazırdır ama veri sağlayıcı bağlanana kadar pasiftir.
+- **(b) Evren survivorship/hindsight bias içerir** (yukarıda; backtest getirileri
+  şişkin, canlı çıpa ~%10/yıl).
+
+### 🔲 TASLAK — kullanıcı onayı bekleyen sayısal eşikler
+
+Aşağıdaki eşikler **taslaktır**; canlıya alma öncesi kullanıcı onayı gerekir:
+
+| Kapı | Ölçüt | Taslak eşik |
+|---|---|---|
+| 3. ay (operasyonel) | Karne otomatik doluluk | %100 (elle müdahale 0) |
+| 3. ay (operasyonel) | Gerçekleşen/tahmini maliyet sapması | ≤ ±%25 (D.2 ~%14.7/yıl çıpasına göre) |
+| 3. ay (operasyonel) | Öneri → icra gecikmesi | ≤ 1 işlem günü |
+| 3. ay (operasyonel) | Sistem-dışı işlem sayısı | 0 |
+| 12. ay (performans) | Yuvarlanan 12a getiri | ≥ SPY |
+| 12. ay (performans) | Maksimum düşüş | ≤ 1.5 × SPY düşüşü |
+
+> Kur/transfer maliyetleri bot kapsamı dışıdır (broker/banka tarafında oluşur).
+
 ## Mimari
 
 ```
