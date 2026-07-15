@@ -14,20 +14,18 @@ portfolio:
   execution: manual         # bot sadece sinyal üretir, alım-satımı kullanıcı yapar
 
 # --- Sepet dağılımı (toplam bütçenin yüzdesi) ---
+# Sembol listeleri burada DEĞİL, config/universe.yaml'da tutulur (tek gerçek
+# kaynak). Config yükleyici her sepetin `universe` alanını universe.yaml'dan
+# yeniden doldurur; burada yalnız ağırlık ve tanım kalır.
 baskets:
   low_volatility:
     allocation_pct: 40
     description: "S&P 500 geneli, düşük beta hisseler/ETF'ler (savunmacı sektörler)"
     max_beta: 1.0
-    # İzlenecek evren (sinyal motoru bunları tarar). Genel ETF'ler dahil; kripto yok.
-    universe: [SPY, XLP, XLU, JNJ, PG, KO, PEP, COST, WMT, MCD,
-               CL, KMB, MDLZ, MO, NEE, DUK, SO, VZ, ABBV, MRK]
 
   high_volatility:
     allocation_pct: 35
     description: "Yarı iletken / AI donanım ve biyoteknoloji (kripto hariç)"
-    universe: [NVDA, AMD, SMCI, TSM, AVGO, MU, QCOM, ARM, MRVL, LRCX,
-               AMAT, ASML, PLTR, ANET, MRNA, BIIB, VRTX, REGN, CRSP, ALNY]
 
   under_radar:
     allocation_pct: 25
@@ -39,8 +37,6 @@ baskets:
       anlaşma/sözleşme.
     focus_sectors: [yapay_zeka, uzay, kuantum, nukleer, savunma,
                     saglik_teknolojisi, enerji_depolama, robotik]
-    universe: [IONQ, RGTI, QBTS, RKLB, ASTS, LUNR, OKLO, SMR, NNE, FLNC,
-               TEM, SYM, ALAB, POWL, CELH, HIMS, TDW, APP, ANF, KTOS]
 
 # --- Teknik göstergeler ---
 technical:
@@ -66,6 +62,32 @@ technical:
     price_vs_ma_long: 0.6    # fiyat 200G ortalamanın altında/üstünde
     price_vs_ma_short: 0.4   # fiyat 50G ortalamanın altında/üstünde
 
+# --- Rotasyon (v2) — canlı portföy rotasyonu ---
+# Sembol seçimi ve ağırlıklandırma. v1 eşik motorunun yerini alır (Faz C canlı
+# akış). Pozisyon başına sepet ağırlığı = allocation / positions_per_basket.
+#
+# CANLI VARSAYILANLAR = FAZ B KAZANANI (results/competition_winner.json):
+#   s2_momentum · per_basket · N=6 · biweekly · rejim KAPALI.
+# Bu değerler dönem-ayrımı disiplinine tabi doğrulama sürecinin çıktısıdır
+# (tune 2016-2019 → validate 2020-2022 → final 2023-2026, bkz. docs/DURUM.md).
+# HERHANGİ BİR PARAMETRE DEĞİŞİKLİĞİ = YENİDEN DOĞRULAMA GEREKTİRİR (CLAUDE.md
+# kuralı artık canlı için de geçerli); kazananın parametrelerini elle değiştirme.
+rotation:
+  frequency: biweekly           # KAZANAN. monthly | biweekly
+  selection: per_basket         # KAZANAN. per_basket | global_top_n
+  score: s2_momentum            # KAZANAN. s1_technical | s2_momentum (Görev A.2)
+  top_n: 6                      # KAZANAN (global_top_n modunda hedef pozisyon sayısı)
+  rebalance_band_pct: 20        # kalan pozisyon hedeften bu kadar (%) saparsa ekle/azalt önerisi
+  max_positions_per_theme: 2    # global_top_n modunda tema başına en çok pozisyon
+  # S2 momentum penceresi (işlem günü): son `lookback_days`, son `skip_days` hariç
+  momentum:
+    lookback_days: 126
+    skip_days: 21
+  # Canlı akışın (bot.main) çekeceği fiyat geçmişi (yıl). Momentum skoru
+  # lookback+skip (~147 işlem günü) ister; 2 yıl bu + gözlem/çöküş-replay için
+  # güvenli marj. Yalnız veri-çekme operasyonel parametresi (sıralamayı değiştirmez).
+  live_history_years: 2
+
 # --- Sinyal kararı ---
 # Nihai skor [-1, 1] aralığında. Eşiklere göre BUY / SELL / HOLD.
 signals:
@@ -74,6 +96,30 @@ signals:
   # Risk/Ödül kapısı: BUY sinyalinin hedef1'e uzaklığı, stop'a uzaklığının en az
   # bu katı olmalı. Altındaysa alım geçilir (HOLD) — risk/ödül disiplini.
   min_risk_reward: 1.0
+
+# --- Satış uyarıları (Görev A.3) — rotasyon dışı kural-bazlı çıkışlar ---
+# Stop EMRİ değil; kullanıcıya vurgulu UYARI. Karar her zaman kullanıcının.
+# Üç bağımsız tetik; aynı pozisyon için aynı tetik günde bir kez bildirilir.
+sell_alerts:
+  atr_exit_multiple: 3.0            # fiyat girişten N×ATR aşağı düşerse teknik acil durum
+  # Ping-pong (aç-kapa) koruması — teşhis: results/diag_1923_trades.md (churn'ün %92'si sıralama-çöküşü idi).
+  # multiple=3 + persist_days=5, results/diag_sensitivity_sweep.md'deki 4 noktalı
+  # ön-kalibrasyon taramasında (2016-2019 tune, churn kriteri) en düşük churn'ü
+  # verdi: 320 işlem / ayda 3.00 uyarı (ızgaradaki en düşük); mult=2,persist=3
+  # varsayılanına göre işlem sayısı 553→320, ranking_collapse 340→90,
+  # ayda-ortalama-uyarı 8.25→3.00. Seçim churn/uyarı-yoğunluğu kriterine göredir;
+  # getiri sayıları (tabloda da vardı) seçim gerekçesi OLARAK KULLANILMADI
+  # (bkz. sweep raporundaki dönem-ayrımı uyarısı) — yalnız tune penceresinde,
+  # yalnız churn ölçütüyle karar verildi.
+  ranking_collapse_multiple: 3      # eşik çarpanı: per_basket'te 3×positions_per_basket (sepet-içi), global_top_n'de 3×top_n (küresel)
+  ranking_collapse_persist_days: 5  # çöküş eşiği ancak art arda N işlem günü aşılırsa tetiklenir; tek günlük gürültü uyarı üretmez (teknik acil tetik MUAF)
+  slot_refill_cooldown_days: 5      # uyarıyla kapanan sembol N işlem günü slot adayı olamaz — yapısal aç-kapa koruması
+  fundamental:
+    earnings_surprise_min_pct: -15  # kazanç sürprizi bu eşiğin altındaysa (kazanç çöküşü)
+    revenue_growth_max: 0.0         # zarar (marj<0) + gelir daralması (büyüme<bu) BİRLİKTE
+    insider_sell_ratio_min: 3.0     # satış/alım oranı (asimetrik: alım > satım normal sayılır)
+    insider_sell_min_count: 3       # en az bu kadar satış işlemi olmalı
+    news_negative_max: -0.30        # iki kaynak da (normalize [-1,1]) bu eşiğin altındaysa belirgin negatif
 
 # --- Temel analiz ---
 fundamental:
@@ -98,7 +144,70 @@ notification:
   frequency: daily
   send_after_market_close: true
 
-# --- Backtesting ---
+# --- Backtesting (v1 eşik motoru) ---
 backtest:
   lookback_years: 3
   initial_capital: 3000
+
+# --- Rotasyon backtest ve ölçüm katmanı (Faz B) ---
+# İcra, maliyet, rejim anahtarı, dönem pencereleri ve pertürbasyon topluluğu.
+# Kod tarafında sabit değer yoktur; tüm sayılar buradan okunur (CLAUDE.md).
+rotation_backtest:
+  initial_capital: 3000
+  # İcra: rotasyon sinyali ayın ilk işlem günü KAPANIŞ verisiyle; icra ERTESİ
+  # işlem günü AÇILIŞ'tan (bak-önden-yok). execution_lag_days=1.
+  execution_lag_days: 1
+  # Maliyetler ilk günden. Komisyon (bps) + sepet-bazlı kayma (bps).
+  commission_bps: 5
+  commission_fixed_usd: 0        # standart ($3.000) koşu: işlem başına sabit ücret yok
+  fractional_shares: false       # standart koşu tam-sayı hisse (küçük bütçe koşusu small_budget'ta açar)
+  slippage_bps:                  # sepet-bazlı kayma
+    low_volatility: 5
+    high_volatility: 10
+    under_radar: 25
+  # Sermaye dağıtımı. Rejim anahtarı açıkken (aşağıda) risk-off'ta düşürülür.
+  deployment_pct: 100
+  # Rejim anahtarı hipotezi (Görev B.3): SPY, ma_days ortalamasının ALTINA
+  # kapanırsa dağıtım deployment_pct'ten regime.deployment_pct'e düşer; üstüne
+  # dönünce normale. v1'in hisse-bazlı filtresinden AYRI bir hipotezdir.
+  regime:
+    enabled: false
+    benchmark: SPY
+    ma_days: 200
+    deployment_pct: 50
+  # Dönem pencereleri (dönem ayrımı disiplini — CLAUDE.md, İHLAL EDİLEMEZ).
+  windows:
+    tune:     {start: 2016-01-01, end: 2019-12-31}
+    validate: {start: 2020-01-01, end: 2022-12-31}
+    final:    {start: 2023-01-01, end: 2026-12-31}
+  # Pertürbasyon topluluğu (Görev B.2): tekil sayı raporlanmaz.
+  ensemble:
+    runs: 50
+    start_jitter_days: 10        # başlangıç ±10 işlem günü (tekdüze)
+    slippage_jitter_pct: 50      # kayma ±%50 (çarpansal)
+    band_low_pct: 10             # rapor bandı alt yüzdelik
+    band_high_pct: 90            # rapor bandı üst yüzdelik
+    health_band_pct: 30          # bant genişliği medyanın ±%30'unu aşarsa uyarı
+    seed: 12345                  # determinizm: aynı tohum -> aynı topluluk
+  # Konfigürasyon yarışması (Görev B.3) — ızgara YALNIZ tune (2016-2019)'da koşulur.
+  competition:
+    grid:
+      score: [s1_technical, s2_momentum]
+      selection: [per_basket, global_top_n]
+      top_n: [6, 8]
+      frequency: [monthly, biweekly]
+      regime: [false, true]      # rejim anahtarı açık/kapalı
+    max_candidates: 2            # tune'dan en fazla bu kadar aday doğrulamaya geçer
+  # Küçük bütçe uyumu (Görev D.2) — $1.000 gerçeğinde ölçek cezasını GÖRÜNÜR kıl.
+  # Bu blok YALNIZ small_budget koşusunda (python -m backtest.small_budget) devreye
+  # girer; standart koşu (report_v2/competition) yukarıdaki ana ayarları kullanır.
+  # Kazananın hiçbir ROTASYON parametresine dokunmaz (score/selection/top_n/frequency/
+  # regime aynen kalır) — yalnız bütçe mekaniği değişir. Broker bilgisi (kullanıcı
+  # doğruladı): kesirli hisse destekleniyor; işlem başına sabit ücret $1.50.
+  small_budget:
+    initial_capital: 1000        # $1.000 başlangıç (pozisyon hedefi ~$125-200 bandı)
+    commission_fixed_usd: 1.5    # işlem başına sabit ücret (bps kaymaya EK); ~$167'de tek yön ~%0.9
+    fractional_shares: true      # kesirli hisse (broker destekliyor) → 2 ondalık adet
+    # Kesirli hisse destekli olduğu için fiyat-uygunluk kuralı ZORUNLU DEĞİL;
+    # broker değişirse tek satırla devreye alınabilsin diye pasif (null) tutulur.
+    max_price_vs_target: null

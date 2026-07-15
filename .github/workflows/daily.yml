@@ -1,11 +1,18 @@
-name: Günlük Borsa Analizi
+name: Günlük Rotasyon (v2)
+
+# FAZ C: bot.main artık v1 eşik motorunu DEĞİL v2 kesitsel momentum rotasyonunu
+# çalıştırır (bkz. bot.rotation.live, bot.legacy_engine). Komut değişmedi
+# (python -m bot.main); değişen main'in çağırdığı akıştır.
 
 on:
-  schedule:
-    # 22:00 UTC, hafta içi (Pzt-Cum). ABD piyasası kapanışından sonra
-    # (16:00 ET = 20:00/21:00 UTC — DST'ye göre; 22:00 güvenli marj).
-    - cron: "0 22 * * 1-5"
-  workflow_dispatch: {}   # elle tetikleme (test için)
+  # CANLI TETİK GÜVENE ALINDI (Faz D): otomatik cron zamanlaması DEVRE DIŞI.
+  # Bu dal main'e merge edilince denetimsiz bir canlı koşu tetiklenmesin diye
+  # yalnız ELLE tetik (workflow_dispatch) bırakıldı. İLK gerçek canlı koşu insan
+  # tarafından, gözetimli tetiklenecek (bkz. docs/DURUM.md — canlı deneme insan
+  # onayında). Cron'u yeniden açmak bilinçli bir insan kararıdır:
+  #   schedule:
+  #     - cron: "0 22 * * 1-5"   # 22:00 UTC hafta içi (ABD kapanışı sonrası)
+  workflow_dispatch: {}   # yalnız elle tetikleme (gözetimli canlı koşu)
 
 # Yalnızca repo içeriğini okuması yeterli (least-privilege).
 permissions:

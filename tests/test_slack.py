@@ -1,18 +1,21 @@
-"""Slack biçimlendirme testleri — ağ gerektirmez (send çağrılmaz)."""
+"""Slack v2 rotasyon biçimlendirme — snapshot testli (Görev C.1). Ağ gerektirmez.
+
+Altın dosyalar tests/snapshots/*.json. Biçim değişirse test kırılır; kasıtlı
+değişiklikte dosyalar yeniden üretilir (scratchpad/gen_golden.py deseni).
+v1 eşik BUY/SELL/HOLD biçiminin TAMAMEN kaldırıldığı da doğrulanır.
+"""
 from __future__ import annotations
 
-from datetime import date
+import json
+from pathlib import Path
 
-from bot.models import Basket, Signal, SignalType
 from bot.notify import SlackNotifier
+from tests.slack_fixtures import rotation_decision, summary_decision, watch_decision
 
-
-def _sig(symbol, stype, score=0.5, basket=Basket.HIGH_VOLATILITY, reasons=None):
-    return Signal(symbol, basket, stype, score, 100.0, reasons=reasons or ["gerekçe"])
+SNAP = Path(__file__).resolve().parent / "snapshots"
 
 
 def _texts(payload) -> str:
-    """Tüm blok metinlerini tek stringde topla (arama kolaylığı için)."""
     parts = [payload["text"]]
     for b in payload["blocks"]:
         if "text" in b and isinstance(b["text"], dict):
@@ -22,43 +25,71 @@ def _texts(payload) -> str:
     return "\n".join(parts)
 
 
-def test_message_has_header_and_counts():
-    signals = [
-        _sig("AAA", SignalType.BUY),
-        _sig("BBB", SignalType.SELL),
-        _sig("CCC", SignalType.STOP_LOSS),
-        _sig("DDD", SignalType.HOLD),
-    ]
-    payload = SlackNotifier("http://x").format_message(signals, on_date=date(2026, 7, 11))
-    blob = _texts(payload)
-    assert "2026-07-11" in blob
-    assert "1 acil satış" in blob and "1 alış" in blob and "1 satış" in blob and "1 bekle" in blob
-    # Kategoriler görünüyor
-    assert "ACİL SATIŞ" in blob and "ALIŞ SİNYALLERİ" in blob and "SATIŞ SİNYALLERİ" in blob
-    # Semboller
-    assert "AAA" in blob and "CCC" in blob
+def _golden(name: str) -> dict:
+    with open(SNAP / f"{name}.json", "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def test_holds_are_summarized_not_listed_individually():
-    signals = [_sig(f"H{i}", SignalType.HOLD) for i in range(20)]
-    payload = SlackNotifier("http://x").format_message(signals)
-    blob = _texts(payload)
-    assert "Bekle (20)" in blob
-    # Her HOLD için ayrı section açılmamalı (blok sayısı makul)
-    assert len(payload["blocks"]) < 10
+def test_rotation_day_matches_snapshot():
+    payload = SlackNotifier("http://x").format_message(rotation_decision())
+    assert payload == _golden("slack_rotation_day")
 
 
-def test_empty_signals_still_valid():
-    payload = SlackNotifier("http://x").format_message([])
-    assert payload["blocks"][0]["type"] == "header"
-    assert "0 alış" in _texts(payload)
+def test_watch_day_matches_snapshot():
+    payload = SlackNotifier("http://x").format_message(watch_decision())
+    assert payload == _golden("slack_watch_day")
+
+
+def test_monthly_summary_matches_snapshot():
+    payload = SlackNotifier("http://x").format_message(summary_decision())
+    assert payload == _golden("slack_monthly_summary")
+
+
+def test_monthly_summary_renders_portfolio_spy_universe():
+    blob = _texts(SlackNotifier("http://x").format_message(summary_decision()))
+    assert "AYLIK KARNE" in blob
+    assert "Portföy %+3.10" in blob and "SPY %+1.80" in blob and "Evren al-tut %+2.40" in blob
+
+
+def test_no_monthly_summary_block_when_absent():
+    blob = _texts(SlackNotifier("http://x").format_message(rotation_decision()))
+    assert "AYLIK KARNE" not in blob      # summary None -> blok yok (snapshot korunur)
+
+
+def test_rotation_message_has_entries_exits_and_money():
+    blob = _texts(SlackNotifier("http://x").format_message(rotation_decision()))
+    assert "ROTASYON GÜNÜ" in blob
+    assert "GİREN" in blob and "ÇIKAN" in blob
+    assert "💰" in blob and "$1,000.00" in blob      # sizing görünür
+    assert "sıra düşüşü" in blob                      # çıkan gerekçesi
+    assert "Kalan (2)" in blob
+
+
+def test_watch_day_has_slot_fill_and_observation_no_rotation():
+    blob = _texts(SlackNotifier("http://x").format_message(watch_decision()))
+    assert "İzleme" in blob
+    assert "SLOT DOLDURMA" in blob
+    assert "Günlük gözlem" in blob
+    assert "GİREN" not in blob and "ÇIKAN" not in blob
+
+
+def test_no_v1_threshold_language_anywhere():
+    """v1 eşik BUY/SELL/HOLD biçimi tamamen kaldırıldı — hiçbir izi kalmamalı."""
+    for dec in (rotation_decision(), watch_decision()):
+        blob = _texts(SlackNotifier("http://x").format_message(dec))
+        for banned in ("ALIŞ SİNYALLERİ", "SATIŞ SİNYALLERİ", "ACİL SATIŞ (stop-loss)",
+                       "R/R", "stop-loss", "buy_threshold", "Bekle ("):
+            assert banned not in blob, f"v1 dili sızdı: {banned!r}"
 
 
 def test_block_and_section_limits_respected():
-    # Çok sayıda uzun gerekçeli BUY -> chunking ve blok limiti devrede
-    long_reason = "çok uzun bir gerekçe metni " * 20
-    signals = [_sig(f"S{i}", SignalType.BUY, reasons=[long_reason]) for i in range(120)]
-    payload = SlackNotifier("http://x").format_message(signals)
+    dec = rotation_decision()
+    # Çok sayıda uzun uyarı -> chunking ve blok limiti devrede
+    long = "çok uzun gerekçe " * 40
+    from bot.rotation.alerts import SellAlert, SellTrigger, TriggerType
+    dec.sell_alerts = [SellAlert(f"S{i}", [SellTrigger(TriggerType.TECHNICAL, long)], i)
+                       for i in range(120)]
+    payload = SlackNotifier("http://x").format_message(dec)
     assert len(payload["blocks"]) <= 49
     for b in payload["blocks"]:
         if b.get("type") == "section":

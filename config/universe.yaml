@@ -1,0 +1,80 @@
+# =========================================================
+#  Evren tanımı — tek gerçek kaynak (single source of truth)
+# =========================================================
+#  Her sembol tam olarak bir sepete (basket) ve bir temaya (theme) aittir.
+#  - basket: sepet ağırlıkları config/strategy.yaml'da tutulur; burada yalnız
+#    sembolün hangi sepete ait olduğu belirtilir.
+#  - theme: yoğunlaşma kontrolü ve `global_top_n` seçim modu bunu kullanır
+#    (tema başına en çok 2 pozisyon). 60/60 sembol tema etiketli olmalıdır.
+#
+#  Not: v1 sinyal motoru ve backtest, sepet başına sembol listesini bu
+#  dosyadan yeniden-doldurulmuş haliyle okur (config yükleyici baskets'e enjekte
+#  eder). Böylece strategy.yaml dosyasında yalnız strateji ağırlıkları kalır.
+# =========================================================
+
+symbols:
+  # --- Düşük volatilite sepeti (savunmacı) ---
+  SPY:  {basket: low_volatility,  theme: broad_market}
+  XLP:  {basket: low_volatility,  theme: consumer_staples}
+  XLU:  {basket: low_volatility,  theme: utilities}
+  JNJ:  {basket: low_volatility,  theme: healthcare}
+  PG:   {basket: low_volatility,  theme: consumer_staples}
+  KO:   {basket: low_volatility,  theme: consumer_staples}
+  PEP:  {basket: low_volatility,  theme: consumer_staples}
+  COST: {basket: low_volatility,  theme: consumer_staples}
+  WMT:  {basket: low_volatility,  theme: consumer_staples}
+  MCD:  {basket: low_volatility,  theme: consumer_staples}
+  CL:   {basket: low_volatility,  theme: consumer_staples}
+  KMB:  {basket: low_volatility,  theme: consumer_staples}
+  MDLZ: {basket: low_volatility,  theme: consumer_staples}
+  MO:   {basket: low_volatility,  theme: consumer_staples}
+  NEE:  {basket: low_volatility,  theme: utilities}
+  DUK:  {basket: low_volatility,  theme: utilities}
+  SO:   {basket: low_volatility,  theme: utilities}
+  VZ:   {basket: low_volatility,  theme: telecom}
+  ABBV: {basket: low_volatility,  theme: healthcare}
+  MRK:  {basket: low_volatility,  theme: healthcare}
+
+  # --- Yüksek volatilite sepeti (yarı iletken/AI + biyoteknoloji) ---
+  NVDA: {basket: high_volatility, theme: semis_ai}
+  AMD:  {basket: high_volatility, theme: semis_ai}
+  SMCI: {basket: high_volatility, theme: semis_ai}
+  TSM:  {basket: high_volatility, theme: semis_ai}
+  AVGO: {basket: high_volatility, theme: semis_ai}
+  MU:   {basket: high_volatility, theme: semis_ai}
+  QCOM: {basket: high_volatility, theme: semis_ai}
+  ARM:  {basket: high_volatility, theme: semis_ai}
+  MRVL: {basket: high_volatility, theme: semis_ai}
+  LRCX: {basket: high_volatility, theme: semis_ai}
+  AMAT: {basket: high_volatility, theme: semis_ai}
+  ASML: {basket: high_volatility, theme: semis_ai}
+  PLTR: {basket: high_volatility, theme: ai_software}
+  ANET: {basket: high_volatility, theme: semis_ai}
+  MRNA: {basket: high_volatility, theme: biotech}
+  BIIB: {basket: high_volatility, theme: biotech}
+  VRTX: {basket: high_volatility, theme: biotech}
+  REGN: {basket: high_volatility, theme: biotech}
+  CRSP: {basket: high_volatility, theme: biotech}
+  ALNY: {basket: high_volatility, theme: biotech}
+
+  # --- Radar altı sepeti (gelecek vaadeden sektörler) ---
+  IONQ: {basket: under_radar,     theme: quantum}
+  RGTI: {basket: under_radar,     theme: quantum}
+  QBTS: {basket: under_radar,     theme: quantum}
+  RKLB: {basket: under_radar,     theme: space}
+  ASTS: {basket: under_radar,     theme: space}
+  LUNR: {basket: under_radar,     theme: space}
+  OKLO: {basket: under_radar,     theme: nuclear}
+  SMR:  {basket: under_radar,     theme: nuclear}
+  NNE:  {basket: under_radar,     theme: nuclear}
+  FLNC: {basket: under_radar,     theme: energy_storage}
+  TEM:  {basket: under_radar,     theme: healthcare_tech}
+  SYM:  {basket: under_radar,     theme: robotics}
+  ALAB: {basket: under_radar,     theme: semis_ai}
+  POWL: {basket: under_radar,     theme: energy_infrastructure}
+  CELH: {basket: under_radar,     theme: consumer_growth}
+  HIMS: {basket: under_radar,     theme: healthcare_tech}
+  TDW:  {basket: under_radar,     theme: energy_services}
+  APP:  {basket: under_radar,     theme: ai_software}
+  ANF:  {basket: under_radar,     theme: consumer_growth}
+  KTOS: {basket: under_radar,     theme: defense}
