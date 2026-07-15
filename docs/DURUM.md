@@ -311,9 +311,11 @@ Dal `fix/live-sizing-pro-rata`. İlk canlı koşuda 6 slot adayından 5'i
 | deployment_pct | `live.py` | deployable = capital × deployment_pct/100 uygulanır. |
 | Kesirli hisse | `strategy.yaml` `rotation.live_fractional_shares: true` + `live.py` | canlı sizing kesirli; backtest ayarından AYRI. Kesirli adet 2 ondalığa AŞAĞI yuvarlanır (round yukarı yuvarlayıp nakdi aşıyordu). |
 
-Doğrulama: $1.000 nakit + 6 boş slot → 6 aday da >$0, toplam ≈$979 (deployment
-sınırı $1.000 içinde), ağırlıklara göre pro-rata (low_vol ~$195×2 / high_vol ~$172×2
-/ under_radar ~$122×2).
+Doğrulama: $1.000 nakit + 6 boş slot → 6 aday da >$0, ağırlıklara göre pro-rata
+(low_vol ~$195×2 / high_vol ~$172×2 / under_radar ~$122×2). **deployment_pct
+gerçekten uygulanıyor** (ampirik: 100→$978.63, 95→$930.64, 50→$482.50 — hepsi
+tavan altında ve doğru ölçekleniyor). Regresyon testi KASITLI deployment_pct=95
+kullanır (tavan $950 < çarpansız ~$979) → çarpan uygulanmazsa test kırılır.
 
 **Rotasyon günü vs izleme günü (Q2):** Takvim mantığı DOĞRU — `is_rotation_day`
 2026-07-15'i biweekly rotasyon günü (ayın 15-sonrası ilk işlem günü) olarak
@@ -325,11 +327,12 @@ hatası değil. Framing: rotasyon gününde all-cash portföy zaten "🟢 GİREN
 sözcüğü all-cash ilk koşuda küçük yanıltıcı ama işlevsel mekanizma doğru (davranış
 değiştirilmedi).
 
-Regresyon: `test_rotation_live.py` (+3: rotasyon/izleme pro-rata sıfır-yok +
-budget_max-yerine-nakit ölçek), `test_sheets.py` (+4: get_free_cash oku/0/isimle-atla).
+Regresyon: `test_rotation_live.py` (+4: rotasyon/izleme pro-rata sıfır-yok +
+budget_max-yerine-nakit ölçek + deployment_pct=95/50 ölçekleme ispatı),
+`test_sheets.py` (+4: get_free_cash oku/0/isimle-atla).
 
 ## Testler
-- **193 test yeşil** (186 → +7: canlı sizing pro-rata 3 + sheets serbest-nakit 4).
+- **194 test yeşil** (186 → +8: canlı sizing pro-rata/deployment 4 + sheets serbest-nakit 4).
 - **186 test yeşil** (184 → +2: PR #3 hotfix — NaN→int koruması sheets + live).
 - **184 test yeşil** (180 → +4: fractional adet üretimi, sabit komisyon per-trade
   maliyeti, ensemble maliyet/sermaye oranı toplama, küçük bütçe daha yüksek oran).

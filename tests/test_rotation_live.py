@@ -72,8 +72,13 @@ def test_free_cash_shared_pro_rata_no_candidate_zero_rotation_day():
     yalnız ucuz bir sembol adet alıyor, kalanlar '💰 0 adet ≈ $0.00'. Beklenen:
     nakit hedef sepet ağırlıklarına (allocation/positions_per_basket) göre PRO-RATA
     paylaşılır ve toplam deployment_pct sınırını aşmaz.
+
+    deployment_pct=95 KASITLI seçildi (config varsayılanı 100 DEĞİL): tavan $950,
+    çarpansız sonuçtan (~$979) STRİKT düşük → deployment_pct pro-rata hesaba
+    uygulanmazsa toplam $950'yi aşar ve test kırılır (çarpanın uygulandığını ispatlar).
     """
     strat = _strat()
+    strat.rotation_backtest["deployment_pct"] = 95      # tavan $950 < çarpansız ~$979
     d = run_live_flow(strat, _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
                       today=ROT_DAY, cash=1000.0)
     assert d.is_rotation_day
@@ -82,11 +87,12 @@ def test_free_cash_shared_pro_rata_no_candidate_zero_rotation_day():
         assert b.shares > 0, f"{b.symbol} sıfır adet aldı (nakit-tükenmesi/flooring)"
         assert b.value > 0, f"{b.symbol} ${0:.2f} tutar aldı"
     total = sum(b.value for b in d.rotation_entries)
-    deployment_pct = float(strat.rotation_backtest.get("deployment_pct", 100))
-    limit = 1000.0 * deployment_pct / 100.0
-    assert total <= limit + 1e-6, f"toplam ${total:.2f} > deployment sınırı ${limit:.2f}"
+    limit = 1000.0 * 95 / 100.0                    # = $950 tavan
+    assert total <= limit + 1e-6, (
+        f"toplam ${total:.2f} > deployment tavanı ${limit:.2f} "
+        f"(deployment_pct pro-rata hesaba uygulanmıyor)")
     # Sermaye anlamlı ölçüde dağıtıldı (tek adaya yığılma / atıl nakit değil).
-    assert total > 0.9 * limit, f"toplam ${total:.2f} deployment sınırının çok altında"
+    assert total > 0.9 * limit, f"toplam ${total:.2f} deployment tavanının çok altında"
 
 
 def test_free_cash_shared_pro_rata_no_candidate_zero_watch_day():
@@ -118,6 +124,25 @@ def test_all_cash_start_ignores_budget_max_uses_free_cash():
     t5 = sum(b.value for b in d5.rotation_entries)
     assert t1 <= 1000.0 + 1e-6 and t5 <= 5000.0 + 1e-6
     assert t5 > 4 * t1              # ~5× ölçek (flooring toleransıyla)
+
+
+def test_deployment_pct_scales_pro_rata_total():
+    """deployment_pct pro-rata toplamı DOĞRUDAN ölçekler: %50 tavan, %100'ün yarısı.
+
+    Aynı nakit/portföyü iki deployment_pct ile koş; toplam oranı ≈ dp oranı olmalı.
+    deployment çarpanı hiç uygulanmasa iki toplam eşit çıkar → test kırılır.
+    """
+    strat100 = _strat(); strat100.rotation_backtest["deployment_pct"] = 100
+    strat50 = _strat(); strat50.rotation_backtest["deployment_pct"] = 50
+    d100 = run_live_flow(strat100, _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
+                         today=ROT_DAY, cash=1000.0)
+    d50 = run_live_flow(strat50, _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
+                        today=ROT_DAY, cash=1000.0)
+    t100 = sum(b.value for b in d100.rotation_entries)
+    t50 = sum(b.value for b in d50.rotation_entries)
+    assert t100 <= 1000.0 + 1e-6 and t50 <= 500.0 + 1e-6
+    # ~yarısı (flooring toleransıyla): 0.45–0.55 bandı
+    assert 0.45 * t100 <= t50 <= 0.55 * t100, f"t50=${t50:.2f} t100=${t100:.2f} (deployment ölçeklemiyor)"
 
 
 def test_rotation_entries_respect_cooldown_block():
