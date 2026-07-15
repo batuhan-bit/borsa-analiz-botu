@@ -257,7 +257,7 @@ Dal `feature/live-switchover`; her görev ayrı commit; testler yeşil.
 | Görev | Durum | Çıktı |
 |------|-------|-------|
 | D.2 Küçük bütçe uyumu | ✅ | `backtest/small_budget.py` — Faz B kazananını İKİ bütçe mekaniğiyle (standart $3.000/sabit $0/tam hisse **vs** küçük $1.000/sabit $1.50/kesirli) aynı final penceresinde topluluk (B.2 altyapısı, 50 koşu) koşup yan yana raporlar. Koşu-zamanı dönem-ayrımı bekçisi: aktif rotasyon config'i `competition_winner.json` ile eşleşmezse durur. Çıktı `results/small_budget_1000.md`. |
-| D.1 Devreye alma sözleşmesi | ✅ | README "Beklentiler ve Devreye Alma" bölümü — 12 ay bağlılık / 3 yıl adil değerlendirme / ilk çeyrek gürültü; başarı kıstası (12a getiri ≥ SPY VE MaxDD ≤ 1.5×SPY, yalnız 12. ay); $1.000 operasyonel 3. ay kapısı; iki sınırlama; sayısal eşikler 🔲 TASLAK (kullanıcı onayı bekliyor). |
+| D.1 Devreye alma sözleşmesi | ✅ | README "Beklentiler ve Devreye Alma" bölümü — 12 ay bağlılık / 3 yıl adil değerlendirme / ilk çeyrek gürültü; başarı kıstası (12a getiri ≥ SPY VE MaxDD ≤ 1.5×SPY, yalnız 12. ay); $1.000 operasyonel 3. ay kapısı; iki sınırlama; sayısal eşikler ✅ ONAYLANDI (tarih: 2026-07-15) — doluluk ≥%95, maliyet sapması tek yönlü ≤×1.25, uyarı yoğunluğu ayda 2-4 (yumuşak bant), 12. ay sermaye varsayımı README'ye eklendi. |
 
 ### D.2 sonucu (final penceresi 2023-2026, ölçüm koşusu)
 - **Standart $3.000 satırı `competition_final.md`'yi BİREBİR yeniden üretti**
@@ -305,8 +305,10 @@ aynı emsal). Getiri sayıları hiçbir parametre kararına girdi olmadı.
 - ⏸ **İNSAN ONAYI:** Faz C/D kod tamam ama gerçek Slack/Sheets'e karşı canlı deneme
   YAPILMADI (kullanıcı talebi). İlk canlı koşu insan gözetiminde ELLE tetiklenmeli
   (daily.yml cron devre dışı; yalnız `workflow_dispatch`).
-- 🔲 **TASLAK EŞİKLER:** README devreye-alma tablosundaki sayısal eşikler kullanıcı
-  onayı bekliyor (3. ay operasyonel + 12. ay performans kapıları).
+- ✅ **EŞİKLER ONAYLANDI (2026-07-15):** README devreye-alma tablosundaki sayısal
+  eşikler kullanıcı tarafından onaylandı (3. ay operasyonel + 12. ay performans
+  kapıları); revize doluluk/maliyet/uyarı-yoğunluğu eşikleri ve 12. ay sermaye
+  varsayımı README'ye işlendi.
 - Dal `feature/live-switchover` push'landı; main'e merge insan onayıyla. Merge
   öncesi cron devre dışı olduğundan denetimsiz canlı koşu riski yok.
 

@@ -51,6 +51,10 @@ kod değişmeden ayarlanabilir.
 - Yuvarlanan **12 aylık getiri ≥ SPY** **VE** maksimum düşüş **≤ 1.5×SPY düşüşü**.
 - **Evren al-tut** her raporda bir bilgi kolonu olarak gösterilir (çıpa değil, bağlam).
 - **12. ayda takvimli gözden geçirme:** *devam / revize / durdur*.
+- **Sermaye varsayımı:** 12. ay hükmü, 3. ay kapısından sonra ek nakit girişi
+  **olmadığı** varsayımıyla başlangıç $1.000 üzerinden değerlendirilir; kullanıcı
+  ara dönemde nakit eklerse getiri karşılaştırması zaman-ağırlıklı (money-weighted
+  değil) getiriye göre yeniden hesaplanır.
 
 ### Düşük bütçeli canlı dönem ($1.000, 3 ay)
 
@@ -73,16 +77,17 @@ kod değişmeden ayarlanabilir.
 - **(b) Evren survivorship/hindsight bias içerir** (yukarıda; backtest getirileri
   şişkin, canlı çıpa ~%10/yıl).
 
-### 🔲 TASLAK — kullanıcı onayı bekleyen sayısal eşikler
+### ✅ ONAYLANDI (tarih: 2026-07-15) — sayısal eşikler
 
-Aşağıdaki eşikler **taslaktır**; canlıya alma öncesi kullanıcı onayı gerekir:
+Aşağıdaki eşikler kullanıcı tarafından onaylanmıştır:
 
-| Kapı | Ölçüt | Taslak eşik |
+| Kapı | Ölçüt | Eşik |
 |---|---|---|
-| 3. ay (operasyonel) | Karne otomatik doluluk | %100 (elle müdahale 0) |
-| 3. ay (operasyonel) | Gerçekleşen/tahmini maliyet sapması | ≤ ±%25 (D.2 ~%14.7/yıl çıpasına göre) |
+| 3. ay (operasyonel) | Karne otomatik doluluk | ≥%95 (elle müdahale **0** kalır — bu ayrı, sıfırlanamaz bir koşuldur; %95'in altındaki boşlukların nedeni raporlanır) |
+| 3. ay (operasyonel) | Gerçekleşen/tahmini maliyet sapması | tek yönlü ≤ tahmin × 1.25 (yalnız aşım yönü ölçülür; D.2 ~%14.7/yıl çıpasına göre) |
 | 3. ay (operasyonel) | Öneri → icra gecikmesi | ≤ 1 işlem günü |
 | 3. ay (operasyonel) | Sistem-dışı işlem sayısı | 0 |
+| 3. ay (operasyonel) | Satış uyarısı yoğunluğu | ayda 2-4 (bant dışı = araştırma tetikler, sert kapı DEĞİL) |
 | 12. ay (performans) | Yuvarlanan 12a getiri | ≥ SPY |
 | 12. ay (performans) | Maksimum düşüş | ≤ 1.5 × SPY düşüşü |
 
