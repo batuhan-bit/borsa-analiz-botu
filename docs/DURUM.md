@@ -1,8 +1,9 @@
 # DURUM — Sinyal Botu v2
 
-> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-15** (FAZ B tamam + **FAZ C canlı geçişi: C.1 + C.2 kod tamam**).
+> Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-15** (FAZ B/C tamam + **FAZ D: D.1 + D.2 tamam; canlı cron devre dışı**).
 > Aktif dal: `feature/live-switchover` (feature/rotation-v2'den; main'e merge insan onayıyla).
 > ⏸ **Gerçek Slack/Sheets'e karşı canlı deneme YAPILMADI** — insan onayı bekliyor.
+> 🔒 **daily.yml otomatik cron DEVRE DIŞI** (yalnız elle `workflow_dispatch`) — merge sonrası denetimsiz canlı koşu olmasın diye.
 
 ## Dönem ayrımı disiplini (İHLAL EDİLEMEZ — CLAUDE.md)
 - Parametre ayarı/konfig seçimi YALNIZ **2016-2019** verisinde.
@@ -249,7 +250,44 @@ kurup tarih→indeks çevirisiyle aynı nesneyi yeniden kurar.
 - Temel kırmızı-bayrak tetiği canlıda şimdilik pasif (fundamentals boş geçiliyor);
   A.3 makinesi hazır, veri sağlayıcı bağlanması ayrı bir adım.
 
+## FAZ D — Düşük bütçeli canlı dönem ve devreye alma · ✅ TAMAM
+
+Dal `feature/live-switchover`; her görev ayrı commit; testler yeşil.
+
+| Görev | Durum | Çıktı |
+|------|-------|-------|
+| D.2 Küçük bütçe uyumu | ✅ | `backtest/small_budget.py` — Faz B kazananını İKİ bütçe mekaniğiyle (standart $3.000/sabit $0/tam hisse **vs** küçük $1.000/sabit $1.50/kesirli) aynı final penceresinde topluluk (B.2 altyapısı, 50 koşu) koşup yan yana raporlar. Koşu-zamanı dönem-ayrımı bekçisi: aktif rotasyon config'i `competition_winner.json` ile eşleşmezse durur. Çıktı `results/small_budget_1000.md`. |
+| D.1 Devreye alma sözleşmesi | ✅ | README "Beklentiler ve Devreye Alma" bölümü — 12 ay bağlılık / 3 yıl adil değerlendirme / ilk çeyrek gürültü; başarı kıstası (12a getiri ≥ SPY VE MaxDD ≤ 1.5×SPY, yalnız 12. ay); $1.000 operasyonel 3. ay kapısı; iki sınırlama; sayısal eşikler 🔲 TASLAK (kullanıcı onayı bekliyor). |
+
+### D.2 sonucu (final penceresi 2023-2026, ölçüm koşusu)
+- **Standart $3.000 satırı `competition_final.md`'yi BİREBİR yeniden üretti**
+  (getiri %+349.10, MaxDD %-22.73, 264 işlem, maliyet $966.33) → deterministik,
+  parametre kayması YOK kanıtı.
+- **Küçük $1.000:** getiri %+192.33 [%+159.07, %+216.91], MaxDD %-26.35,
+  248 işlem, maliyet $976.49, ortalama sermaye $1.844.
+- **Yıllık maliyet / ortalama sermaye:** standart **%3.70** vs küçük **%14.68**
+  → küçük bütçe **3.96×** daha ağır maliyet sürüklemesi (sabit $1.50 küçük
+  pozisyonda oransal büyür). Bu oran README'ye tek cümleyle taşındı.
+
+### Dönem ayrımı notu (D.2)
+Bu bir **ölçüm/doğrulama** koşusudur — parametre SEÇMEZ. Kazananın rotasyon
+ayarları (score/selection/top_n/frequency/regime) AYNEN kullanıldı (koşu-zamanı
+bekçisi + `test_live_config` guard); yalnız bütçe mekaniği (sermaye/komisyon/
+kesirlilik) değişti. Final penceresine "yeni bakış" değildir: zaten incelenmiş
+pencerede, donmuş kazanan config'le, ölçüm sütunu eklemek için deterministik
+yeniden koşu (competition_final.md'ye MaxDD/maliyet sütunu eklenirken kullanılan
+aynı emsal). Getiri sayıları hiçbir parametre kararına girdi olmadı.
+
+### Config değişikliği (strategy.yaml)
+- `rotation_backtest.fractional_shares: false` (standart koşu tam-sayı hisse).
+- `rotation_backtest.small_budget:` bloğu — initial_capital 1000,
+  commission_fixed_usd 1.5, fractional_shares true, max_price_vs_target null
+  (kesirli hisse destekli olduğu için pasif; broker değişirse tek satırla açılır).
+  Bu blok YALNIZ `small_budget` koşusunda okunur; standart koşuları etkilemez.
+
 ## Testler
+- **184 test yeşil** (180 → +4: fractional adet üretimi, sabit komisyon per-trade
+  maliyeti, ensemble maliyet/sermaye oranı toplama, küçük bütçe daha yüksek oran).
 - **180 test yeşil** (140 → +40: live_config 2, calendar 7, cooldown_store 7,
   live 9, scorecard 9, slack v2 +3, main_smoke 2, +1).
   Yeni: `tests/test_rotation_pingpong.py` (POWL
@@ -264,10 +302,13 @@ kurup tarih→indeks çevirisiyle aynı nesneyi yeniden kurar.
 - Çalıştırma: `python -m pytest -q`.
 
 ## Sıradaki
-- ⏸ **İNSAN ONAYI:** Faz C kod tamam ama gerçek Slack/Sheets'e karşı canlı deneme
-  YAPILMADI (kullanıcı talebi). İlk canlı koşu insan gözetiminde tetiklenmeli.
-- **Faz D** (README beklenti sözleşmesi + $1,000 küçük bütçe uyumu) — bkz. iş listesi.
-- Dal `feature/live-switchover` push'landı; main'e merge insan onayıyla.
+- ⏸ **İNSAN ONAYI:** Faz C/D kod tamam ama gerçek Slack/Sheets'e karşı canlı deneme
+  YAPILMADI (kullanıcı talebi). İlk canlı koşu insan gözetiminde ELLE tetiklenmeli
+  (daily.yml cron devre dışı; yalnız `workflow_dispatch`).
+- 🔲 **TASLAK EŞİKLER:** README devreye-alma tablosundaki sayısal eşikler kullanıcı
+  onayı bekliyor (3. ay operasyonel + 12. ay performans kapıları).
+- Dal `feature/live-switchover` push'landı; main'e merge insan onayıyla. Merge
+  öncesi cron devre dışı olduğundan denetimsiz canlı koşu riski yok.
 
 ## Notlar
 - `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu (ATR periyodu 14
