@@ -202,7 +202,10 @@ def run_live_flow(
         if df is None:
             return None
         s = df["close"].loc[:day]
-        return float(s.iloc[-1]) if not s.empty else None
+        if s.empty:
+            return None
+        val = s.iloc[-1]
+        return float(val) if pd.notna(val) else None
 
     def ranking_as_of(day: pd.Timestamp) -> list[tuple[str, float]]:
         scored = []

@@ -157,6 +157,26 @@ def test_ranking_collapse_persist_fires_for_persistently_low_symbol():
     assert "SPY" not in alerts
 
 
+def test_slot_fill_handles_nan_close_without_crashing():
+    """Adayın son kapanışı NaN ise (eksik/kısmi bar) çökmemeli, fiyat 0 sayılmalı.
+
+    Regresyon: last_close NaN'ı None yerine olduğu gibi döndürüyordu; `nan or 0.0`
+    NaN'ı gerçek (truthy) sayıp fallback'i atlıyor, `_size_buy` içinde
+    math.floor(target_value / nan) 'cannot convert float NaN to integer' ile
+    çöküyordu.
+    """
+    bars = _bars()
+    bars["XLU"] = bars["XLU"].copy()
+    bars["XLU"].loc[NON_ROT_DAY, "close"] = float("nan")
+    holdings = [_holding("SPY", "low_volatility", 100, 2)]
+    d = run_live_flow(_strat(), bars, holdings=holdings, cooldown=AlertCooldown(cooldown_days=5),
+                      today=NON_ROT_DAY, portfolio_value=5000)
+    fills = {b.symbol: b for b in d.slot_fills}
+    assert "XLU" in fills
+    assert fills["XLU"].price == 0
+    assert fills["XLU"].shares == 0
+
+
 def test_healthy_portfolio_has_no_sell_alerts():
     holdings = [_holding("SPY", "low_volatility", entry_price=100, shares=2),
                 _holding("NVDA", "high_volatility", entry_price=100, shares=2)]
