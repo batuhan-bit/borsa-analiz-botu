@@ -369,6 +369,7 @@ budget_max-yerine-nakit ölçek + deployment_pct=95/50 ölçekleme ispatı),
     PR #2 merge'ünü fetch etmemesiydi. `git fetch` + FF senkron ile çözüldü.
 
 ## Notlar
+- **deployment_pct 100→95** (kullanıcı talebi, 2026-07-15): canlı akış + backtest bu değeri okur; boş slotlara nakit `capital × 95/100` dağıtılır (%5 nakit tamponu). Operasyonel sizing parametresi — kazanan rotasyon parametrelerine dokunmaz, dönem-ayrımını ihlal etmez.
 - `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu (ATR periyodu 14
   hariç — bu modüller arası yerleşik konvansiyon, ayarlanabilir parametre değil).
 - Her değişiklik sonrası test suite yeşil bırakıldı.

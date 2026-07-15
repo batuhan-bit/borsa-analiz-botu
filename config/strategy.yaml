@@ -172,7 +172,9 @@ rotation_backtest:
     high_volatility: 10
     under_radar: 25
   # Sermaye dağıtımı. Rejim anahtarı açıkken (aşağıda) risk-off'ta düşürülür.
-  deployment_pct: 100
+  # Canlı akış da bu değeri okur (bot.rotation.live): boş slotlara dağıtılan
+  # nakit = capital × deployment_pct/100. 95 → %5 nakit tamponu bırakılır.
+  deployment_pct: 95
   # Rejim anahtarı hipotezi (Görev B.3): SPY, ma_days ortalamasının ALTINA
   # kapanırsa dağıtım deployment_pct'ten regime.deployment_pct'e düşer; üstüne
   # dönünce normale. v1'in hisse-bazlı filtresinden AYRI bir hipotezdir.
