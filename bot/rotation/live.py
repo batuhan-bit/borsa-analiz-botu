@@ -155,12 +155,21 @@ def run_live_flow(
     cooldown: koşular arası kalıcı durumdan yeniden kurulan AlertCooldown
               (bot.rotation.cooldown_store.reconstruct_cooldown). Bugün yeni
               kapananlar burada register edilir; çağıran `newly_cooled`'u persist eder.
-    portfolio_value/cash: sizing tabanı; verilmezse holdings piyasa değeri, o da
-              0 ise config bütçesi (budget_max) kullanılır.
+    portfolio_value: verilirse sizing tabanını doğrudan belirler (test/çağıran
+              tam kontrol ister).
+    cash: serbest nakit (Sheets NAKİT satırı). portfolio_value yoksa sizing
+              tabanı = holdings piyasa değeri + cash olur; all-cash başlangıçta
+              taban = cash. İkisi de yoksa config budget_max fallback (yalnız
+              gerçek nakit bilinmiyorken). Nakit adaylar arasına hedef ağırlıklara
+              göre PRO-RATA dağıtılır (tek adaya yığılmaz).
     """
     rot_cfg = strategy.rotation
     frequency = rot_cfg.get("frequency", "monthly")
-    fractional = bool(strategy.rotation_backtest.get("fractional_shares", False))
+    # Canlı broker kesirli hisse destekler (Görev D.2). Bu, backtest'in
+    # `rotation_backtest.fractional_shares` (standart koşu tam-sayı) ayarından
+    # AYRIDIR — canlı sizing küçük bütçede tek-adet flooring'e takılmasın diye.
+    fractional = bool(rot_cfg.get("live_fractional_shares",
+                                  strategy.rotation_backtest.get("fractional_shares", False)))
     atr_mult = float(strategy.raw.get("sell_alerts", {}).get("atr_exit_multiple", 3.0))
     top_n = int(rot_cfg.get("top_n", 6))
     fundamentals = fundamentals or {}
@@ -277,13 +286,19 @@ def run_live_flow(
     for sym in decision.newly_cooled:
         cooldown.register(sym, today_index)
 
-    # Sizing tabanı
-    capital = _sizing_capital(strategy, holdings, bars, as_of_ts, portfolio_value)
+    # Sizing tabanı: gerçek yatırılabilir sermaye = mevcut pozisyon değeri + serbest
+    # nakit (Sheets NAKİT satırından). deployment_pct kadarı dağıtılır. Hedef
+    # ağırlıklar (allocation / positions_per_basket) toplamı 1.0 olduğundan
+    # target_value = weight × deployable, nakdi adaylar arasında PRO-RATA paylaştırır
+    # (tek adaya yığmaz). budget_max yalnız hem holdings hem cash bilinmiyorsa fallback.
+    capital = _sizing_capital(strategy, holdings, bars, as_of_ts, portfolio_value, cash)
+    deployment_pct = float(strategy.rotation_backtest.get("deployment_pct", 100))
+    deployable = capital * deployment_pct / 100.0
 
     # --- 2) Rotasyon önerisi (yalnız rotasyon günü) ---
     if is_rot:
         _build_rotation(decision, strategy, engine, rank_fn_as_of(as_of_ts, today_index),
-                        holdings, held_set, ranking_today, bars, as_of_ts, capital, cash,
+                        holdings, held_set, ranking_today, bars, as_of_ts, deployable,
                         fractional, last_close)
     else:
         # --- 3) Slot doldurma (rotasyon-dışı gün) ---
@@ -293,7 +308,7 @@ def run_live_flow(
             px = last_close(c.symbol, as_of_ts) or 0.0
             w = _target_weight_for(strategy, c.symbol)
             decision.slot_fills.append(_size_buy(
-                c.symbol, c.basket, c.theme, w, px, capital, cash, fractional,
+                c.symbol, c.basket, c.theme, w, px, deployable, fractional,
                 c.rank, c.reason))
 
     # --- 4) Günlük gözlem (her gün, eylemsiz) ---
@@ -344,7 +359,14 @@ def _replay_collapse(strategy, ranking_as_of, calendar, holdings, today_index, p
     return collapsed
 
 
-def _sizing_capital(strategy, holdings, bars, as_of_ts, portfolio_value) -> float:
+def _sizing_capital(strategy, holdings, bars, as_of_ts, portfolio_value, cash=None) -> float:
+    """Yatırılabilir sermaye tabanı = mevcut pozisyon piyasa değeri + serbest nakit.
+
+    - portfolio_value verilirse doğrudan onu kullan (çağıran tam kontrol ister).
+    - Aksi halde holdings piyasa değeri + `cash` (Sheets NAKİT satırı) toplanır.
+    - İkisi de bilinmiyorsa (cash=None ve holdings=0) config budget_max fallback.
+      budget_max bir TAHMİN'dir; gerçek nakit bilindiğinde ASLA kullanılmaz.
+    """
     if portfolio_value is not None:
         return float(portfolio_value)
     total = 0.0
@@ -356,6 +378,10 @@ def _sizing_capital(strategy, holdings, bars, as_of_ts, portfolio_value) -> floa
             s = df["close"].loc[:as_of_ts]
             if not s.empty:
                 total += shares * float(s.iloc[-1])
+    if cash is not None:
+        # Serbest nakit bilindiğinde taban = pozisyon değeri + nakit (all-cash
+        # başlangıçta = nakit). budget_max fallback'ine DÜŞÜLMEZ.
+        return total + float(cash)
     if total > 0:
         return total
     return float(strategy.portfolio.get("budget_max", 5000))
@@ -371,15 +397,19 @@ def _target_weight_for(strategy: Strategy, symbol: str) -> float:
     return alloc / per_basket if per_basket else 0.0
 
 
-def _size_buy(symbol, basket, theme, weight, price, capital, cash, fractional,
+def _size_buy(symbol, basket, theme, weight, price, capital, fractional,
               rank, reason) -> BuySuggestion:
+    # target_value = weight × deployable. Ağırlıklar (allocation/positions_per_basket)
+    # toplamı 1.0 olduğu için bu, deployable'ı adaylar arasında PRO-RATA paylaştırır;
+    # eski `min(target_value, cash)` kapısı (her adayı TÜM nakde kısıtlayıp nakdi tek
+    # adaya yığan) kaldırıldı — sermaye tabanı zaten doğru nakit üzerinden hesaplanıyor.
     target_value = weight * capital
-    if cash is not None:
-        target_value = min(target_value, float(cash))
     if price <= 0 or target_value <= 0:
         shares = 0.0
     elif fractional:
-        shares = round(target_value / price, 2)
+        # 2 ondalığa AŞAĞI yuvarla — round() yukarı yuvarlayıp önerilen toplamın
+        # serbest nakdi aşmasına yol açabiliyordu (nakit-kısıtı ihlali).
+        shares = math.floor(target_value / price * 100) / 100.0
     else:
         shares = float(math.floor(target_value / price))
     return BuySuggestion(
@@ -390,7 +420,7 @@ def _size_buy(symbol, basket, theme, weight, price, capital, cash, fractional,
 
 
 def _build_rotation(decision, strategy, engine, rank_fn, holdings, held_set,
-                    ranking_today, bars, as_of_ts, capital, cash, fractional, last_close):
+                    ranking_today, bars, as_of_ts, capital, fractional, last_close):
     # Mevcut ağırlıklar (yatırılan değere göre; rebalans notları tavsiyedir)
     values: dict[str, float] = {}
     for h in holdings:
@@ -410,7 +440,7 @@ def _build_rotation(decision, strategy, engine, rank_fn, holdings, held_set,
         t = target_by_symbol[sym]
         px = last_close(sym, as_of_ts) or 0.0
         decision.rotation_entries.append(_size_buy(
-            sym, t.basket, t.theme, t.weight, px, capital, cash, fractional,
+            sym, t.basket, t.theme, t.weight, px, capital, fractional,
             rank_pos.get(sym), f"yeni giren (sıra #{rank_pos.get(sym, '—')})"))
 
     for sym in plan.exiting:

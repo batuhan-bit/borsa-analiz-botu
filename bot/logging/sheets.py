@@ -25,6 +25,11 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 SIGNAL_HEADERS = ["Zaman", "Sembol", "Sepet", "Sinyal", "Skor", "Fiyat", "Gerekçeler"]
 POSITION_HEADERS = ["Sembol", "Sepet", "Giriş Tarihi", "Giriş Fiyatı", "Adet", "Durum"]
+# Portföy nakitteyken kullanıcı 'Pozisyonlar'a bilgi amaçlı bir NAKİT satırı girer;
+# serbest nakit USD tutarı bu satırın 'Giriş Fiyatı' hücresinde tutulur (sizing tabanı).
+# Türkçe 'İ' büyük harfi ile ASCII 'I' (küçük 'i'.upper()) farkını tolere etmek için
+# iki biçim de kabul edilir.
+CASH_ROW_LABELS = {"NAKİT", "NAKIT"}
 PERFORMANCE_HEADERS = [
     "Tarih", "Portföy Değeri", "Açık Pozisyon", "Üretilen Sinyal", "Alış", "Satış", "Stop-Loss",
 ]
@@ -141,6 +146,10 @@ class SheetsLogger:
             symbol = str(r.get("Sembol", "")).strip().upper()
             if not symbol:
                 continue
+            if symbol in CASH_ROW_LABELS:
+                # NAKİT satırı gerçek pozisyon değildir (serbest nakit taşıyıcısı);
+                # Adet hücresine yanlışlıkla sayı yazılsa bile pozisyon sayılmaz.
+                continue
             shares = _to_float(r.get("Adet"))
             if not shares or shares <= 0:
                 continue
@@ -153,6 +162,23 @@ class SheetsLogger:
                 "status": status or "OPEN",
             })
         return positions
+
+    def get_free_cash(self) -> float:
+        """'Pozisyonlar' NAKİT satırından serbest nakit (USD) oku (yoksa 0.0).
+
+        Kullanıcı, serbest nakit USD tutarını NAKİT satırının 'Giriş Fiyatı'
+        hücresine yazar (ör. 1000). Bu, canlı sizing tabanına beslenir:
+        capital = açık pozisyon değeri + serbest nakit. Nakit, boş slotlara hedef
+        sepet ağırlıklarına göre PRO-RATA dağıtılır (bkz. bot.rotation.live).
+        Satır yoksa/boşsa 0.0 döner (sizing budget_max fallback'ine düşer).
+        """
+        ws = self._worksheet("Pozisyonlar", POSITION_HEADERS)
+        if ws is None:
+            return 0.0
+        for r in ws.get_all_records():
+            if str(r.get("Sembol", "")).strip().upper() in CASH_ROW_LABELS:
+                return _to_float(r.get("Giriş Fiyatı")) or 0.0
+        return 0.0
 
     # --- Cooldown durumu (Görev C.1 — koşular arası kalıcı) ---
     def read_cooldown_state(self) -> dict[str, str]:

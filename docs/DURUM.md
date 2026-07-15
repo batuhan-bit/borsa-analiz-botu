@@ -285,7 +285,54 @@ aynı emsal). Getiri sayıları hiçbir parametre kararına girdi olmadı.
   (kesirli hisse destekli olduğu için pasif; broker değişirse tek satırla açılır).
   Bu blok YALNIZ `small_budget` koşusunda okunur; standart koşuları etkilemez.
 
+## Teşhis + düzeltme: İlk canlı koşuda bozuk sizing (çoğu aday $0) · ✅ TAMAM
+
+Dal `fix/live-sizing-pro-rata`. İlk canlı koşuda 6 slot adayından 5'i
+"💰 0 adet ≈ $0.00", yalnız LUNR $611.31 (41 adet). Serbest nakit Sheets'te $1.000.
+
+**Kök neden (kullanıcı hipotezi ELENDİ):** "İlk aday nakdi tüketiyor" DEĞİL —
+`_size_buy` adayları BAĞIMSIZ boyutlandırır, tükenme mantığı yok. İki gerçek kusur:
+1. **Sizing tabanı yanlış.** `main.py` serbest nakdi (Sheets NAKİT satırı) hiç
+   okumuyordu; `_sizing_capital` `budget_max` ($5.000) tahminine düşüyordu. Üstelik
+   `POSITION_HEADERS`'ta nakit taşıyan sütun YOKtu → sistem $1.000'i okuyamıyordu.
+   LUNR $611 = under_radar hedefi (0.125 × $5.000 = $625, floor 41 adet), $1.000'in
+   %61'i olması RASTLANTI.
+2. **Tam-sayı flooring küçük/pahalı slotları $0'a yuvarlıyordu.** Canlı akış
+   `rotation_backtest.fractional_shares` (standart koşu = False) okuyordu; hedef
+   değeri tek hisse fiyatının altındaki slot `floor(target/price)=0` → "$0, 0 adet".
+   Gerçek broker kesirli destekliyor (D.2) — canlı için yanlış mod.
+
+**Düzeltme (ortak sizing yolu):**
+| Parça | Nerede | Ne |
+|------|--------|----|
+| Nakit tabanı | `live.py` `_sizing_capital(+cash)`, `main.py` | taban = holdings değeri + serbest nakit; all-cash'te = nakit. budget_max yalnız gerçek nakit BİLİNMİYORKEN fallback. |
+| Serbest nakit okuma | `sheets.py` `get_free_cash()` | NAKİT satırının 'Giriş Fiyatı' hücresinden USD; NAKİT artık isimle atlanır (Adet'e sayı yazılsa bile pozisyon sayılmaz). |
+| Pro-rata | `live.py` `_size_buy` | `min(target,cash)` kapısı KALDIRILDI (nakdi tek adaya yığıyordu); target=weight×deployable, ağırlıklar toplamı 1.0 → nakit pro-rata paylaşılır. |
+| deployment_pct | `live.py` | deployable = capital × deployment_pct/100 uygulanır. |
+| Kesirli hisse | `strategy.yaml` `rotation.live_fractional_shares: true` + `live.py` | canlı sizing kesirli; backtest ayarından AYRI. Kesirli adet 2 ondalığa AŞAĞI yuvarlanır (round yukarı yuvarlayıp nakdi aşıyordu). |
+
+Doğrulama: $1.000 nakit + 6 boş slot → 6 aday da >$0, ağırlıklara göre pro-rata
+(low_vol ~$195×2 / high_vol ~$172×2 / under_radar ~$122×2). **deployment_pct
+gerçekten uygulanıyor** (ampirik: 100→$978.63, 95→$930.64, 50→$482.50 — hepsi
+tavan altında ve doğru ölçekleniyor). Regresyon testi KASITLI deployment_pct=95
+kullanır (tavan $950 < çarpansız ~$979) → çarpan uygulanmazsa test kırılır.
+
+**Rotasyon günü vs izleme günü (Q2):** Takvim mantığı DOĞRU — `is_rotation_day`
+2026-07-15'i biweekly rotasyon günü (ayın 15-sonrası ilk işlem günü) olarak
+işaretliyor (doğrulandı). Koşu "izleme/slot doldurma" gösterdiyse sebep: etkin
+`as_of` son MEVCUT bara hizalanır; 15'in günlük barı koşu anında henüz
+yayınlanmadıysa `as_of`→14 (izleme günü) olur — veri-zamanlaması etkisi, mantık
+hatası değil. Framing: rotasyon gününde all-cash portföy zaten "🟢 GİREN
+(başlangıç rotasyon portföyü)" olarak sunulur; izleme gününde "boşalan slot adayı"
+sözcüğü all-cash ilk koşuda küçük yanıltıcı ama işlevsel mekanizma doğru (davranış
+değiştirilmedi).
+
+Regresyon: `test_rotation_live.py` (+4: rotasyon/izleme pro-rata sıfır-yok +
+budget_max-yerine-nakit ölçek + deployment_pct=95/50 ölçekleme ispatı),
+`test_sheets.py` (+4: get_free_cash oku/0/isimle-atla).
+
 ## Testler
+- **194 test yeşil** (186 → +8: canlı sizing pro-rata/deployment 4 + sheets serbest-nakit 4).
 - **186 test yeşil** (184 → +2: PR #3 hotfix — NaN→int koruması sheets + live).
 - **184 test yeşil** (180 → +4: fractional adet üretimi, sabit komisyon per-trade
   maliyeti, ensemble maliyet/sermaye oranı toplama, küçük bütçe daha yüksek oran).
@@ -322,6 +369,7 @@ aynı emsal). Getiri sayıları hiçbir parametre kararına girdi olmadı.
     PR #2 merge'ünü fetch etmemesiydi. `git fetch` + FF senkron ile çözüldü.
 
 ## Notlar
+- **deployment_pct 100→95** (kullanıcı talebi, 2026-07-15): canlı akış + backtest bu değeri okur; boş slotlara nakit `capital × 95/100` dağıtılır (%5 nakit tamponu). Operasyonel sizing parametresi — kazanan rotasyon parametrelerine dokunmaz, dönem-ayrımını ihlal etmez.
 - `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu (ATR periyodu 14
   hariç — bu modüller arası yerleşik konvansiyon, ayarlanabilir parametre değil).
 - Her değişiklik sonrası test suite yeşil bırakıldı.

@@ -67,3 +67,40 @@ def test_get_open_positions_skips_cash_placeholder_row(monkeypatch):
     ]))
     positions = logger.get_open_positions()
     assert [p["symbol"] for p in positions] == ["AAA"]
+
+
+def test_get_free_cash_reads_nakit_row_entry_price(monkeypatch):
+    """Serbest nakit NAKİT satırının 'Giriş Fiyatı' hücresinden okunur (USD)."""
+    logger = _disabled_logger()
+    monkeypatch.setattr(logger, "_worksheet", lambda title, headers: _FakeWorksheet([
+        {"Sembol": "NAKİT", "Sepet": "", "Giriş Tarihi": "", "Giriş Fiyatı": "1000",
+         "Adet": "", "Durum": ""},
+        {"Sembol": "AAA", "Sepet": "Teknoloji", "Giriş Tarihi": "2026-01-01",
+         "Giriş Fiyatı": "10.0", "Adet": "5", "Durum": ""},
+    ]))
+    assert logger.get_free_cash() == 1000.0
+
+
+def test_get_free_cash_zero_when_no_nakit_row(monkeypatch):
+    logger = _disabled_logger()
+    monkeypatch.setattr(logger, "_worksheet", lambda title, headers: _FakeWorksheet([
+        {"Sembol": "AAA", "Sepet": "Teknoloji", "Giriş Tarihi": "2026-01-01",
+         "Giriş Fiyatı": "10.0", "Adet": "5", "Durum": ""},
+    ]))
+    assert logger.get_free_cash() == 0.0
+
+
+def test_nakit_row_never_counts_as_position_even_with_shares(monkeypatch):
+    """NAKİT satırına yanlışlıkla Adet yazılsa bile pozisyon sayılmamalı (isimle atlanır)."""
+    logger = _disabled_logger()
+    monkeypatch.setattr(logger, "_worksheet", lambda title, headers: _FakeWorksheet([
+        {"Sembol": "NAKİT", "Sepet": "", "Giriş Tarihi": "", "Giriş Fiyatı": "1000",
+         "Adet": "1000", "Durum": ""},
+        {"Sembol": "AAA", "Sepet": "Teknoloji", "Giriş Tarihi": "2026-01-01",
+         "Giriş Fiyatı": "10.0", "Adet": "5", "Durum": ""},
+    ]))
+    assert [p["symbol"] for p in logger.get_open_positions()] == ["AAA"]
+
+
+def test_disabled_get_free_cash_returns_zero():
+    assert _disabled_logger().get_free_cash() == 0.0
