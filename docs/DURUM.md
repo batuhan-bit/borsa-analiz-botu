@@ -1,7 +1,7 @@
 # DURUM — Sinyal Botu v2
 
 > Oturum sonu durum özeti (CLAUDE.md kuralı). Son güncelleme: **2026-07-15** (FAZ B/C tamam + **FAZ D: D.1 + D.2 tamam; canlı cron devre dışı**).
-> Aktif dal: `feature/live-switchover` (feature/rotation-v2'den; main'e merge insan onayıyla).
+> Aktif dal: `main` (Faz C+D merge edildi — PR #2 + PR #3 hotfix; main HEAD `7d7cc37`).
 > ⏸ **Gerçek Slack/Sheets'e karşı canlı deneme YAPILMADI** — insan onayı bekliyor.
 > 🔒 **daily.yml otomatik cron DEVRE DIŞI** (yalnız elle `workflow_dispatch`) — merge sonrası denetimsiz canlı koşu olmasın diye.
 
@@ -286,6 +286,7 @@ aynı emsal). Getiri sayıları hiçbir parametre kararına girdi olmadı.
   Bu blok YALNIZ `small_budget` koşusunda okunur; standart koşuları etkilemez.
 
 ## Testler
+- **186 test yeşil** (184 → +2: PR #3 hotfix — NaN→int koruması sheets + live).
 - **184 test yeşil** (180 → +4: fractional adet üretimi, sabit komisyon per-trade
   maliyeti, ensemble maliyet/sermaye oranı toplama, küçük bütçe daha yüksek oran).
 - **180 test yeşil** (140 → +40: live_config 2, calendar 7, cooldown_store 7,
@@ -309,8 +310,16 @@ aynı emsal). Getiri sayıları hiçbir parametre kararına girdi olmadı.
   eşikler kullanıcı tarafından onaylandı (3. ay operasyonel + 12. ay performans
   kapıları); revize doluluk/maliyet/uyarı-yoğunluğu eşikleri ve 12. ay sermaye
   varsayımı README'ye işlendi.
-- Dal `feature/live-switchover` push'landı; main'e merge insan onayıyla. Merge
-  öncesi cron devre dışı olduğundan denetimsiz canlı koşu riski yok.
+- ✅ **MAIN'E MERGE TAMAM (2026-07-15):** Faz C+D main'e girdi.
+  - PR #2 (`feature/live-switchover` → main, merge `d043d26`): tüm Faz C+D dosyaları
+    (rotation/*, reporting/scorecard.py, backtest/*, testler).
+  - PR #3 (hotfix, merge `7d7cc37`): canlı akışta NaN→int çökmesi düzeltmesi
+    (sheets.py + live.py + testler).
+  - main HEAD **`7d7cc37`**; 186 test yeşil. Cron hâlâ devre dışı → denetimsiz canlı
+    koşu riski yok.
+  - **Not (kafa karışıklığı kaydı):** Bir ara local `main` bayat (`1774eae`) kalmış,
+    `bot/rotation/live.py` boş/iskelet sanılmıştı. Kod kaybı yoktu; sebep local repo'nun
+    PR #2 merge'ünü fetch etmemesiydi. `git fetch` + FF senkron ile çözüldü.
 
 ## Notlar
 - `strategy.yaml` dışında sabit değer (hardcode) yok kuralına uyuldu (ATR periyodu 14
