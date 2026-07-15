@@ -87,6 +87,12 @@ rotation:
   # lookback+skip (~147 işlem günü) ister; 2 yıl bu + gözlem/çöküş-replay için
   # güvenli marj. Yalnız veri-çekme operasyonel parametresi (sıralamayı değiştirmez).
   live_history_years: 2
+  # Canlı sizing kesirli hisse kullanır mı? Gerçek broker kesirli destekliyor
+  # (Görev D.2 — $1.000 küçük bütçe). Tam-sayı flooring küçük bütçede tek-adet
+  # eşiğinin altındaki slotları $0'a yuvarlıyordu; canlıda kesirli açık. Bu bayrak
+  # backtest'in rotation_backtest.fractional_shares'ından (standart koşu tam sayı)
+  # AYRIDIR — canlı sizing'i etkiler, backtest ölçüm koşularını DEĞİL.
+  live_fractional_shares: true
 
 # --- Sinyal kararı ---
 # Nihai skor [-1, 1] aralığında. Eşiklere göre BUY / SELL / HOLD.

@@ -100,6 +100,11 @@ def main() -> None:
     if holdings:
         log.info("Portföy (%d): %s", len(holdings),
                  ", ".join(h["symbol"] for h in holdings))
+    # Serbest nakit (Sheets NAKİT satırı) — sizing tabanı = holdings değeri + nakit.
+    # Bu okunmazsa canlı sizing budget_max ($5000) tahminine düşer ve boş slotlara
+    # nakdi hatalı (tek adaya yığılmış / çoğu $0) dağıtır.
+    free_cash = logger.get_free_cash()
+    log.info("Serbest nakit (Sheets NAKİT satırı): $%.2f", free_cash)
 
     # 3. Cooldown durumu — koşular arası kalıcı; AlertCooldown'ı yeniden kur
     cooldown_days = int(strategy.raw.get("sell_alerts", {}).get("slot_refill_cooldown_days", 5))
@@ -108,8 +113,11 @@ def main() -> None:
     calendar = _calendar(bars)
     cooldown = reconstruct_cooldown(strategy, stored, calendar)
 
-    # 4. Günlük karar (backtest ile aynı AlertCooldown + rank_fn deseni)
-    decision = run_live_flow(strategy, bars, holdings, cooldown)
+    # 4. Günlük karar (backtest ile aynı AlertCooldown + rank_fn deseni).
+    # cash: serbest nakit → sizing tabanı (holdings değeri + nakit); nakit boş
+    # slotlara hedef ağırlıklara göre pro-rata dağıtılır.
+    decision = run_live_flow(strategy, bars, holdings, cooldown,
+                             cash=free_cash if free_cash > 0 else None)
 
     # 5. Güncellenen cooldown durumunu geri yaz
     if decision.today_index >= 0:

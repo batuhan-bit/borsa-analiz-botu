@@ -64,6 +64,62 @@ def test_rotation_day_proposes_two_per_basket_with_sizing():
         assert b.shares > 0 and b.value > 0 and b.price > 0
 
 
+def test_free_cash_shared_pro_rata_no_candidate_zero_rotation_day():
+    """Regresyon: $1.000 serbest nakit + 6 boş slot → hiçbir aday $0 ALMAMALI.
+
+    Kök neden (düzeltildi): canlı sizing gerçek nakdi okumayıp budget_max ($5.000)
+    tahminine düşüyor, üstelik tam-sayı flooring küçük hedefleri $0'a yuvarlıyordu →
+    yalnız ucuz bir sembol adet alıyor, kalanlar '💰 0 adet ≈ $0.00'. Beklenen:
+    nakit hedef sepet ağırlıklarına (allocation/positions_per_basket) göre PRO-RATA
+    paylaşılır ve toplam deployment_pct sınırını aşmaz.
+    """
+    strat = _strat()
+    d = run_live_flow(strat, _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
+                      today=ROT_DAY, cash=1000.0)
+    assert d.is_rotation_day
+    assert len(d.rotation_entries) == 6            # 3 sepet × 2 pozisyon
+    for b in d.rotation_entries:
+        assert b.shares > 0, f"{b.symbol} sıfır adet aldı (nakit-tükenmesi/flooring)"
+        assert b.value > 0, f"{b.symbol} ${0:.2f} tutar aldı"
+    total = sum(b.value for b in d.rotation_entries)
+    deployment_pct = float(strat.rotation_backtest.get("deployment_pct", 100))
+    limit = 1000.0 * deployment_pct / 100.0
+    assert total <= limit + 1e-6, f"toplam ${total:.2f} > deployment sınırı ${limit:.2f}"
+    # Sermaye anlamlı ölçüde dağıtıldı (tek adaya yığılma / atıl nakit değil).
+    assert total > 0.9 * limit, f"toplam ${total:.2f} deployment sınırının çok altında"
+
+
+def test_free_cash_shared_pro_rata_no_candidate_zero_watch_day():
+    """Aynı regresyon izleme (slot doldurma) yolunda: boş slotlar → aday başına >$0."""
+    strat = _strat()
+    # low_volatility'de yalnız SPY tutuluyor → 5 boş slot (low_vol 1 + high_vol 2 + under 2)
+    holdings = [_holding("SPY", "low_volatility", 100, 2)]
+    d = run_live_flow(strat, _bars(), holdings=holdings, cooldown=AlertCooldown(cooldown_days=5),
+                      today=NON_ROT_DAY, cash=1000.0)
+    assert not d.is_rotation_day
+    assert d.slot_fills, "boş slotlar için aday üretilmedi"
+    for b in d.slot_fills:
+        assert b.shares > 0 and b.value > 0, f"{b.symbol} sıfır adet/tutar aldı"
+
+
+def test_all_cash_start_ignores_budget_max_uses_free_cash():
+    """all-cash başlangıçta sizing tabanı budget_max ($5.000) DEĞİL, serbest nakit olmalı.
+
+    Aynı boş portföyü bir kez cash=1000, bir kez cash=budget_max ($5.000) ile koş;
+    entry değerleri nakitle orantılı ölçeklenmeli (5×). Bu, 'budget_max fallback'
+    gerçek nakit bilinirken devreye girerse kırılır.
+    """
+    strat = _strat()
+    d1 = run_live_flow(strat, _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
+                       today=ROT_DAY, cash=1000.0)
+    d5 = run_live_flow(strat, _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
+                       today=ROT_DAY, cash=5000.0)
+    t1 = sum(b.value for b in d1.rotation_entries)
+    t5 = sum(b.value for b in d5.rotation_entries)
+    assert t1 <= 1000.0 + 1e-6 and t5 <= 5000.0 + 1e-6
+    assert t5 > 4 * t1              # ~5× ölçek (flooring toleransıyla)
+
+
 def test_rotation_entries_respect_cooldown_block():
     cd = AlertCooldown(cooldown_days=5)
     # NVDA'yı bloke et: high_vol top-2 AMD + SMCI olmalı
