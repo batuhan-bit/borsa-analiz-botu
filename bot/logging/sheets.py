@@ -126,6 +126,9 @@ class SheetsLogger:
         """'Pozisyonlar' sekmesinden açık pozisyonları oku (stop-loss için).
 
         'Durum' sütunu KAPALI/CLOSED olmayan satırlar açık kabul edilir.
+        Kullanıcı, portföy tamamen nakitteyken bilgi amaçlı bir "NAKİT" satırı
+        girebilir (Adet/Giriş Tarihi boş) — bu gerçek bir pozisyon değildir,
+        bu yüzden Adet'i pozitif olmayan (boş/0/NaN) satırlar en başta atlanır.
         """
         ws = self._worksheet("Pozisyonlar", POSITION_HEADERS)
         if ws is None:
@@ -138,12 +141,15 @@ class SheetsLogger:
             symbol = str(r.get("Sembol", "")).strip().upper()
             if not symbol:
                 continue
+            shares = _to_float(r.get("Adet"))
+            if not shares or shares <= 0:
+                continue
             positions.append({
                 "symbol": symbol,
                 "basket": str(r.get("Sepet", "")).strip(),
                 "entry_date": r.get("Giriş Tarihi"),
                 "entry_price": _to_float(r.get("Giriş Fiyatı")),
-                "shares": _to_float(r.get("Adet")),
+                "shares": shares,
                 "status": status or "OPEN",
             })
         return positions

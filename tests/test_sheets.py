@@ -43,3 +43,27 @@ def test_to_float_parsing():
     assert _to_float("") is None
     assert _to_float(None) is None
     assert _to_float("abc") is None
+
+
+class _FakeWorksheet:
+    def __init__(self, records):
+        self._records = records
+
+    def get_all_records(self):
+        return self._records
+
+
+def test_get_open_positions_skips_cash_placeholder_row(monkeypatch):
+    """'NAKİT' satırı (Adet/Giriş Tarihi boş) gerçek pozisyon değildir — atlanmalı.
+
+    Regresyon: canlı akışta bu satır pozisyon sanılıp sayıya çevrilmeye
+    çalışılınca 'cannot convert float NaN to integer' ile çöküyordu.
+    """
+    logger = _disabled_logger()
+    monkeypatch.setattr(logger, "_worksheet", lambda title, headers: _FakeWorksheet([
+        {"Sembol": "NAKİT", "Sepet": "", "Giriş Tarihi": "", "Giriş Fiyatı": "", "Adet": "", "Durum": ""},
+        {"Sembol": "AAA", "Sepet": "Teknoloji", "Giriş Tarihi": "2026-01-01",
+         "Giriş Fiyatı": "10.0", "Adet": "5", "Durum": ""},
+    ]))
+    positions = logger.get_open_positions()
+    assert [p["symbol"] for p in positions] == ["AAA"]
