@@ -111,6 +111,52 @@ def test_slippage_scale_increases_cost():
     assert high.total_cost > base.total_cost
 
 
+def test_fractional_shares_produces_decimal_shares():
+    """Görev D.2: kesirli hisse açıkken adet 2 ondalığa yuvarlanır (tam sayı değil).
+
+    Küçük sermaye + kesirli mod → en az bir işlemin adedi tam sayı olmamalı;
+    tam-sayı modda ise tüm adetler tam sayı kalır (kontrol koşusu).
+    """
+    bars = _universe_bars()
+    frac = _strategy()
+    frac.raw.setdefault("rotation_backtest", {})
+    frac.raw["rotation_backtest"].update({"initial_capital": 1000, "fractional_shares": True})
+    r_frac = run_rotation_backtest(frac, bars, apply_costs=True)
+    assert r_frac.trades
+    assert any(abs(t.shares - round(t.shares)) > 1e-9 for t in r_frac.trades)
+    # her adet en fazla 2 ondalık
+    assert all(abs(t.shares - round(t.shares, 2)) < 1e-9 for t in r_frac.trades)
+
+    whole = _strategy()
+    whole.raw.setdefault("rotation_backtest", {})
+    whole.raw["rotation_backtest"].update({"initial_capital": 1000, "fractional_shares": False})
+    r_whole = run_rotation_backtest(whole, bars, apply_costs=True)
+    assert all(abs(t.shares - round(t.shares)) < 1e-9 for t in r_whole.trades)
+
+
+def test_commission_fixed_adds_per_trade_cost():
+    """Görev D.2: işlem başına sabit komisyon toplam maliyeti artırır (bps'e EK)."""
+    bars = _universe_bars()
+    no_fixed = _strategy()
+    no_fixed.raw.setdefault("rotation_backtest", {})
+    no_fixed.raw["rotation_backtest"].update(
+        {"initial_capital": 1000, "fractional_shares": True, "commission_fixed_usd": 0}
+    )
+    with_fixed = _strategy()
+    with_fixed.raw.setdefault("rotation_backtest", {})
+    with_fixed.raw["rotation_backtest"].update(
+        {"initial_capital": 1000, "fractional_shares": True, "commission_fixed_usd": 1.5}
+    )
+    r0 = run_rotation_backtest(no_fixed, bars, apply_costs=True)
+    r1 = run_rotation_backtest(with_fixed, bars, apply_costs=True)
+    assert r1.total_cost > r0.total_cost
+    # Her kapalı işlem = 1 alış + 1 satış → en az num_trades × sabit ücret eklenir.
+    assert r1.total_cost - r0.total_cost >= 1.5 * r1.num_trades - 1e-6
+    # Maliyetsiz koşuda sabit ücret de sıfırlanır.
+    free = run_rotation_backtest(with_fixed, bars, apply_costs=False)
+    assert free.total_cost == 0.0
+
+
 def test_technical_emergency_exit():
     """Girişten sonra çöken bir pozisyon rotasyon-dışı satış tetiğiyle çıkar."""
     strat = _strategy()

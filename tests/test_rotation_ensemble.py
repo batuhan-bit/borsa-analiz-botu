@@ -132,3 +132,33 @@ def test_health_ok_on_narrow_band():
     stats = EnsembleStats("x", [19.0, 20.0, 20.0, 20.0, 21.0], 10, 90)
     threshold = 2.0 * 0.30 * abs(stats.median)     # 12.0
     assert stats.band_width <= threshold
+
+
+def test_cost_ratio_and_avg_capital_collected():
+    """Görev D.2: topluluk yıllık-maliyet/ortalama-sermaye oranını da toplar."""
+    strat = _small_ensemble_strategy()
+    bars = _universe_bars()
+    rep = run_ensemble(strat, bars, start="2020-01-15", end="2020-08-01")
+    assert rep.strategy_cost_ratio_pct is not None
+    assert len(rep.strategy_cost_ratio_pct.samples) == rep.runs
+    assert rep.strategy_avg_capital is not None
+    assert rep.strategy_avg_capital.median > 0
+    # Oran negatif olamaz (maliyet ve sermaye pozitif)
+    assert rep.strategy_cost_ratio_pct.median >= 0
+
+
+def test_small_budget_has_higher_cost_ratio():
+    """Görev D.2 çekirdek iddiası: küçük bütçe + sabit komisyon → daha yüksek
+    yıllık-maliyet/ortalama-sermaye oranı (ölçek cezası görünür olmalı)."""
+    bars = _universe_bars()
+    std = _small_ensemble_strategy()
+    std.raw["rotation_backtest"].update(
+        {"initial_capital": 3000, "commission_fixed_usd": 0, "fractional_shares": False}
+    )
+    small = _small_ensemble_strategy()
+    small.raw["rotation_backtest"].update(
+        {"initial_capital": 1000, "commission_fixed_usd": 1.5, "fractional_shares": True}
+    )
+    r_std = run_ensemble(std, bars, start="2020-01-15", end="2020-08-01")
+    r_small = run_ensemble(small, bars, start="2020-01-15", end="2020-08-01")
+    assert r_small.strategy_cost_ratio_pct.median > r_std.strategy_cost_ratio_pct.median

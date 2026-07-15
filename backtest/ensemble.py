@@ -65,6 +65,10 @@ class EnsembleReport:
     strategy_trades: Optional[EnsembleStats] = None
     strategy_cost: Optional[EnsembleStats] = None
     benchmark_maxdd: list[EnsembleStats] = field(default_factory=list)
+    # Küçük bütçe uyumu (Görev D.2): yıllık toplam maliyet / ortalama sermaye.
+    # Ölçek cezasını görünür kılar — küçük bütçede sabit komisyon oranı büyür.
+    strategy_avg_capital: Optional[EnsembleStats] = None
+    strategy_cost_ratio_pct: Optional[EnsembleStats] = None
 
     @property
     def health_note(self) -> str:
@@ -185,6 +189,8 @@ def run_ensemble(
     strat_dd_samples: list[float] = []
     strat_trade_samples: list[float] = []
     strat_cost_samples: list[float] = []
+    strat_avgcap_samples: list[float] = []
+    strat_costratio_samples: list[float] = []
     bh_samples: list[float] = []
     bh_dd_samples: list[float] = []
     ew_samples: list[float] = []
@@ -205,6 +211,20 @@ def run_ensemble(
         strat_dd_samples.append(r.max_drawdown_pct)
         strat_trade_samples.append(float(r.num_trades))
         strat_cost_samples.append(r.total_cost)
+        # Yıllık maliyet / ortalama sermaye (D.2): ortalama sermaye = özsermaye
+        # eğrisinin zaman-ortalaması (dağıtılmış sermaye); yıllık maliyet = toplam
+        # maliyet / pencere yılı. Oran, küçük bütçede sabit-komisyon sürüklemesini
+        # görünür kılar (aynı config, yalnız bütçe mekaniği değiştiğinde kıyaslanır).
+        eq = r.equity_curve
+        if eq is not None and not eq.empty:
+            avg_cap = float(eq.mean())
+            span_years = max((eq.index[-1] - eq.index[0]).days / 365.25, 1e-9)
+        else:
+            avg_cap = float(r.initial_capital)
+            span_years = 1e-9
+        strat_avgcap_samples.append(avg_cap)
+        annual_cost = r.total_cost / span_years
+        strat_costratio_samples.append(annual_cost / avg_cap * 100.0 if avg_cap > 0 else 0.0)
 
         bh_curve = _normalized_curve(bars.get(benchmark_symbol), run_start, end)
         if bh_curve is not None:
@@ -243,6 +263,8 @@ def run_ensemble(
         strategy_trades=EnsembleStats(config_label, strat_trade_samples, band_low, band_high),
         strategy_cost=EnsembleStats(config_label, strat_cost_samples, band_low, band_high),
         benchmark_maxdd=benchmark_maxdd,
+        strategy_avg_capital=EnsembleStats(config_label, strat_avgcap_samples, band_low, band_high),
+        strategy_cost_ratio_pct=EnsembleStats(config_label, strat_costratio_samples, band_low, band_high),
     )
 
 
