@@ -107,6 +107,12 @@ class LiveDecision:
     prices: dict[str, float] = field(default_factory=dict)
     # Aylık özet (portföy vs SPY vs evren al-tut); main rotasyon gününde doldurur.
     monthly_summary: Optional[dict] = None
+    # Sessiz-veri-kaybı koruması: Sheets Pozisyonlar sekmesinde ayrıştırılamayan
+    # satır(lar) varsa buraya taşınır (satır no + sorunlu değer). Doluysa portföy
+    # EKSİK okunmuş demektir → rotasyon/slot önerileri yanlış temele dayanır ve
+    # bu koşuda BASTIRILIR (öneri yokluğu, yanlış öneriden güvenlidir).
+    read_warnings: list[str] = field(default_factory=list)
+    suppress_suggestions: bool = False
 
 
 # ----------------------------------------------------------------------
@@ -147,6 +153,7 @@ def run_live_flow(
     cash: Optional[float] = None,
     fundamentals: Optional[Mapping[str, Mapping]] = None,
     observation_lookback: int = 5,
+    read_warnings: Optional[Sequence[str]] = None,
 ) -> LiveDecision:
     """Bugünün rotasyon/uyarı/gözlem önerilerini üret.
 
@@ -251,7 +258,12 @@ def run_live_flow(
     decision = LiveDecision(
         as_of=as_of_ts.date(), frequency=frequency, is_rotation_day=is_rot,
         today_index=today_index, ranking=ranking_today,
+        read_warnings=list(read_warnings or []),
     )
+    # Portföy eksik okunduysa (ayrıştırılamayan satır) öneri yanlış temele dayanır;
+    # bu koşuda alım/rotasyon önerileri bastırılır. Satış-uyarısı ve gözlem yine
+    # üretilir (bunlar okunabilen pozisyonlar üzerinden savunmacı/bilgilendiricidir).
+    decision.suppress_suggestions = bool(decision.read_warnings)
 
     # --- 1) Satış-uyarısı taraması (her gün) ---
     persist_days = RankingCollapseTracker(strategy).persist_days
@@ -295,8 +307,13 @@ def run_live_flow(
     deployment_pct = float(strategy.rotation_backtest.get("deployment_pct", 100))
     deployable = capital * deployment_pct / 100.0
 
-    # --- 2) Rotasyon önerisi (yalnız rotasyon günü) ---
-    if is_rot:
+    # --- 2/3) Alım/rotasyon önerileri — eksik portföyde BASTIRILIR ---
+    if decision.suppress_suggestions:
+        # read_warnings dolu: holdings eksik okunmuş. Rotasyon/slot önerisi
+        # üretmiyoruz (yanlış temele dayalı öneri, öneri yokluğundan tehlikelidir).
+        pass
+    elif is_rot:
+        # --- 2) Rotasyon önerisi (yalnız rotasyon günü) ---
         _build_rotation(decision, strategy, engine, rank_fn_as_of(as_of_ts, today_index),
                         holdings, held_set, ranking_today, bars, as_of_ts, deployable,
                         fractional, last_close)

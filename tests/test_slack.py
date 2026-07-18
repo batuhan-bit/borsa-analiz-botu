@@ -82,6 +82,30 @@ def test_no_v1_threshold_language_anywhere():
             assert banned not in blob, f"v1 dili sızdı: {banned!r}"
 
 
+def test_read_warning_rendered_at_top_when_present():
+    """Okunamayan pozisyon satırı varsa uyarı mesajın EN ÜSTÜNDE (özetten önce)."""
+    dec = rotation_decision()
+    dec.read_warnings = ["satır 3 (BAD): Adet='1.2,3' — belirsiz"]
+    dec.suppress_suggestions = True
+    dec.rotation_entries = []
+    dec.rotation_exits = []
+    payload = SlackNotifier("http://x").format_message(dec)
+    # header (0) hemen ardından uyarı bloğu (1) gelmeli; özet (2) ondan sonra
+    assert payload["blocks"][0]["type"] == "header"
+    warn_block = payload["blocks"][1]["text"]["text"]
+    assert "pozisyon satırı okunamadı" in warn_block
+    assert "satır 3 (BAD)" in warn_block and "1.2,3" in warn_block
+    assert "bastırıldı" in warn_block
+    # özet bloğu uyarıdan SONRA gelir (uyarı en üstte)
+    assert "satış uyarısı" in payload["blocks"][2]["text"]["text"]
+
+
+def test_no_read_warning_block_when_absent():
+    """Uyarı yoksa yeni blok eklenmez (mevcut snapshot'lar korunur)."""
+    blob = _texts(SlackNotifier("http://x").format_message(rotation_decision()))
+    assert "okunamadı" not in blob
+
+
 def test_block_and_section_limits_respected():
     dec = rotation_decision()
     # Çok sayıda uzun uyarı -> chunking ve blok limiti devrede

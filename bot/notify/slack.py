@@ -139,8 +139,21 @@ class SlackNotifier:
 
         blocks: list[dict] = [
             {"type": "header", "text": {"type": "plain_text", "text": header, "emoji": True}},
-            {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
         ]
+
+        # --- Sessiz-veri-kaybı uyarısı (EN ÜSTTE) ---
+        # Pozisyonlar sekmesinde ayrıştırılamayan satır varsa portföy eksik okunmuştur;
+        # bu koşuda öneriler bastırıldı. Kullanıcı bunu ilk satırda görmeli.
+        if decision.read_warnings:
+            n = len(decision.read_warnings)
+            warn_text = (
+                f"⚠️ *{n} pozisyon satırı okunamadı* — bu koşunun önerileri EKSİK "
+                f"portföyle hesaplandı; rotasyon/slot önerileri bu koşuda bastırıldı.\n"
+                + "\n".join(f"• {w}" for w in decision.read_warnings)
+            )
+            blocks.extend(_chunk_sections([warn_text]))
+
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": summary}})
 
         # --- Satış uyarıları (her gün, en öne) ---
         _titled_section(blocks, "*🚨 SATIŞ UYARILARI*",

@@ -108,6 +108,40 @@ def test_free_cash_shared_pro_rata_no_candidate_zero_watch_day():
         assert b.shares > 0 and b.value > 0, f"{b.symbol} sıfır adet/tutar aldı"
 
 
+# ---------------------------------------------------------------------------
+#  Sessiz-veri-kaybı koruması: okunamayan satır → öneri bastırılır
+# ---------------------------------------------------------------------------
+def test_read_warnings_suppress_rotation_suggestions():
+    """Portföy eksik okunduysa rotasyon günü bile öneri üretilmez (yanlış temel)."""
+    d = run_live_flow(_strat(), _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
+                      today=ROT_DAY, portfolio_value=5000,
+                      read_warnings=["satır 3 (BAD): Adet='1.2,3' — belirsiz"])
+    assert d.is_rotation_day
+    assert d.suppress_suggestions is True
+    assert d.rotation_entries == [] and d.rotation_exits == []
+    assert d.read_warnings == ["satır 3 (BAD): Adet='1.2,3' — belirsiz"]
+    # Gözlem yine üretilir (okunabilen veri üzerinden bilgilendirici).
+    assert d.observation is not None
+
+
+def test_read_warnings_suppress_slot_fills_on_watch_day():
+    strat = _strat()
+    holdings = [_holding("SPY", "low_volatility", 100, 2)]
+    d = run_live_flow(strat, _bars(), holdings=holdings, cooldown=AlertCooldown(cooldown_days=5),
+                      today=NON_ROT_DAY, cash=1000.0,
+                      read_warnings=["satır 4 (XYZ): Adet='abc' — geçersiz"])
+    assert not d.is_rotation_day
+    assert d.suppress_suggestions is True
+    assert d.slot_fills == []
+
+
+def test_no_read_warnings_keeps_suggestions():
+    d = run_live_flow(_strat(), _bars(), holdings=[], cooldown=AlertCooldown(cooldown_days=5),
+                      today=ROT_DAY, portfolio_value=5000)
+    assert d.suppress_suggestions is False
+    assert d.rotation_entries      # normal koşuda öneri üretilir
+
+
 def test_all_cash_start_ignores_budget_max_uses_free_cash():
     """all-cash başlangıçta sizing tabanı budget_max ($5.000) DEĞİL, serbest nakit olmalı.
 
