@@ -44,12 +44,51 @@ KARNE_HEADERS = [
 ]
 
 
-def _to_float(value: Any) -> Optional[float]:
+class NumberParseError(ValueError):
+    """Sheets hücresindeki sayı okunamadı — satır atlanmalı ve uyarı üretilmeli.
+
+    reason: 'belirsiz' (hem nokta hem virgül var — ondalık/binlik ayırıcı
+    ayırt edilemez) veya 'geçersiz' (sayıya çevrilemez metin).
+    """
+
+    def __init__(self, raw: Any, reason: str) -> None:
+        self.raw = raw
+        self.reason = reason
+        super().__init__(f"{reason}: {raw!r}")
+
+
+def _parse_number(value: Any) -> Optional[float]:
+    """Türkçe ondalık toleransıyla sayı ayrıştır.
+
+    - Boş/None → None (sorun değil; sayı girilmemiş).
+    - "70,16" → 70.16 (virgül ondalık ayracı kabul edilir).
+    - Hem "." hem "," içeren değer BELİRSİZDİR (ör. "1.234,56" mi 1.23456 mı?):
+      tahmin yürütmek yerine NumberParseError('belirsiz') fırlatılır → satır atlanır.
+    - Sayıya çevrilemeyen metin → NumberParseError('geçersiz').
+    """
     if value in (None, ""):
         return None
+    text = str(value).strip()
+    if text == "":
+        return None
+    if "." in text and "," in text:
+        raise NumberParseError(text, "belirsiz")
     try:
-        return float(str(value).replace(",", "."))
+        return float(text.replace(",", "."))
     except (TypeError, ValueError):
+        raise NumberParseError(text, "geçersiz")
+
+
+def _to_float(value: Any) -> Optional[float]:
+    """Geriye dönük yumuşak ayrıştırıcı: hata/boşta sessizce None döner.
+
+    Sessiz-veri-kaybı önemli olan yerlerde (pozisyon/NAKİT okuma) doğrudan
+    _parse_number kullanılıp NumberParseError yakalanır; bu sarmalayıcı yalnız
+    hatanın önemsiz olduğu yerler içindir.
+    """
+    try:
+        return _parse_number(value)
+    except NumberParseError:
         return None
 
 
@@ -58,6 +97,16 @@ class SheetsLogger:
         self._secrets = secrets
         self._sheet = None            # tembel açılır
         self._connect_failed = False
+        # Son okuma sırasında ayrıştırılamayan satırların uyarıları (satır no +
+        # sorunlu değer). Sessiz-veri-kaybı koruması: çağıran (main) bunları
+        # Slack mesajının en üstüne taşır ve öneri üretimini bastırır.
+        self.position_warnings: list[str] = []
+        self.cash_warnings: list[str] = []
+
+    @property
+    def read_warnings(self) -> list[str]:
+        """Son pozisyon/NAKİT okumasında biriken tüm ayrıştırma uyarıları."""
+        return list(self.position_warnings) + list(self.cash_warnings)
 
     # --- Bağlantı ---
     def _credentials(self):
@@ -135,11 +184,13 @@ class SheetsLogger:
         girebilir (Adet/Giriş Tarihi boş) — bu gerçek bir pozisyon değildir,
         bu yüzden Adet'i pozitif olmayan (boş/0/NaN) satırlar en başta atlanır.
         """
+        self.position_warnings = []
         ws = self._worksheet("Pozisyonlar", POSITION_HEADERS)
         if ws is None:
             return []
         positions = []
-        for r in ws.get_all_records():
+        # get_all_records başlık satırını atlar; ilk veri satırı sayfada 2. satırdır.
+        for row_no, r in enumerate(ws.get_all_records(), start=2):
             status = str(r.get("Durum", "")).strip().upper()
             if status in ("KAPALI", "CLOSED"):
                 continue
@@ -150,14 +201,28 @@ class SheetsLogger:
                 # NAKİT satırı gerçek pozisyon değildir (serbest nakit taşıyıcısı);
                 # Adet hücresine yanlışlıkla sayı yazılsa bile pozisyon sayılmaz.
                 continue
-            shares = _to_float(r.get("Adet"))
+            # Adet ayrıştırılamıyorsa satırı SESSİZCE atlamayız: kullanıcı gerçek bir
+            # pozisyon girmiş ama sayı bozuk — bu satır uyarıya dönüşür (aşağıda
+            # rotasyon önerisini de bastırır). Boş/0 Adet (NAKİT benzeri) uyarısızdır.
+            try:
+                shares = _parse_number(r.get("Adet"))
+            except NumberParseError as exc:
+                self.position_warnings.append(
+                    f"satır {row_no} ({symbol}): Adet={exc.raw!r} — {exc.reason}")
+                continue
             if not shares or shares <= 0:
+                continue
+            try:
+                entry_price = _parse_number(r.get("Giriş Fiyatı"))
+            except NumberParseError as exc:
+                self.position_warnings.append(
+                    f"satır {row_no} ({symbol}): Giriş Fiyatı={exc.raw!r} — {exc.reason}")
                 continue
             positions.append({
                 "symbol": symbol,
                 "basket": str(r.get("Sepet", "")).strip(),
                 "entry_date": r.get("Giriş Tarihi"),
-                "entry_price": _to_float(r.get("Giriş Fiyatı")),
+                "entry_price": entry_price,
                 "shares": shares,
                 "status": status or "OPEN",
             })
@@ -172,12 +237,20 @@ class SheetsLogger:
         sepet ağırlıklarına göre PRO-RATA dağıtılır (bkz. bot.rotation.live).
         Satır yoksa/boşsa 0.0 döner (sizing budget_max fallback'ine düşer).
         """
+        self.cash_warnings = []
         ws = self._worksheet("Pozisyonlar", POSITION_HEADERS)
         if ws is None:
             return 0.0
-        for r in ws.get_all_records():
+        for row_no, r in enumerate(ws.get_all_records(), start=2):
             if str(r.get("Sembol", "")).strip().upper() in CASH_ROW_LABELS:
-                return _to_float(r.get("Giriş Fiyatı")) or 0.0
+                try:
+                    return _parse_number(r.get("Giriş Fiyatı")) or 0.0
+                except NumberParseError as exc:
+                    # NAKİT tutarı okunamazsa sessizce 0'a düşmek sizing tabanını
+                    # sessizce bozardı — uyarı üret (öneri bastırma tetiklenir).
+                    self.cash_warnings.append(
+                        f"NAKİT satırı (satır {row_no}): Giriş Fiyatı={exc.raw!r} — {exc.reason}")
+                    return 0.0
         return 0.0
 
     # --- Cooldown durumu (Görev C.1 — koşular arası kalıcı) ---

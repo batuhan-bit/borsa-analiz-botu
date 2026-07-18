@@ -106,6 +106,14 @@ def main() -> None:
     free_cash = logger.get_free_cash()
     log.info("Serbest nakit (Sheets NAKİT satırı): $%.2f", free_cash)
 
+    # Sessiz-veri-kaybı koruması: Pozisyonlar sekmesinde ayrıştırılamayan satır varsa
+    # portföy EKSİK okunmuş demektir. Uyarıları toplayıp karara taşırız; run_live_flow
+    # bunlar doluysa öneri üretimini bastırır, Slack en üstte gösterir.
+    read_warnings = logger.read_warnings
+    if read_warnings:
+        log.warning("Sheets okuma uyarısı (%d satır atlandı) — öneriler bastırılacak: %s",
+                    len(read_warnings), " | ".join(read_warnings))
+
     # 3. Cooldown durumu — koşular arası kalıcı; AlertCooldown'ı yeniden kur
     cooldown_days = int(strategy.raw.get("sell_alerts", {}).get("slot_refill_cooldown_days", 5))
     store = SheetsCooldownStore(logger, cooldown_days)
@@ -117,7 +125,8 @@ def main() -> None:
     # cash: serbest nakit → sizing tabanı (holdings değeri + nakit); nakit boş
     # slotlara hedef ağırlıklara göre pro-rata dağıtılır.
     decision = run_live_flow(strategy, bars, holdings, cooldown,
-                             cash=free_cash if free_cash > 0 else None)
+                             cash=free_cash if free_cash > 0 else None,
+                             read_warnings=read_warnings)
 
     # 5. Güncellenen cooldown durumunu geri yaz
     if decision.today_index >= 0:

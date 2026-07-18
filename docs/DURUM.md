@@ -250,6 +250,28 @@ kurup tarih→indeks çevirisiyle aynı nesneyi yeniden kurar.
 - Temel kırmızı-bayrak tetiği canlıda şimdilik pasif (fundamentals boş geçiliyor);
   A.3 makinesi hazır, veri sağlayıcı bağlanması ayrı bir adım.
 
+## Sheets sayı okuma dayanıklılığı + sessiz-veri-kaybı koruması · ✅ TAMAM
+
+Dal `feature/sheets-number-resilience`. Operasyonel sağlamlaştırma — dönem-ayrımını
+ve kazanan rotasyon parametrelerini ETKİLEMEZ (yalnız Sheets okuma/Slack yüzeyi).
+
+- **Türkçe ondalık toleransı** (`bot/logging/sheets.py::_parse_number`): "70,16" → 70.16
+  (virgül ondalık ayracı). Tüm sayısal alanlarda (Giriş Fiyatı, Adet, NAKİT) uygulanır.
+  Hem nokta hem virgül içeren değer (ör. "1.234,56") BELİRSİZ sayılır — tahmin yürütmek
+  yerine `NumberParseError('belirsiz')` fırlatılır → satır atlanır + uyarı üretilir.
+- **Sessiz-veri-kaybı koruması:** Pozisyonlar sekmesinde ayrıştırılamayan satır artık
+  sessizce yok sayılmaz. `get_open_positions`/`get_free_cash` uyarı listesi
+  (`read_warnings`: satır no + sorunlu değer) doldurur. `main` bunları `run_live_flow`'a
+  taşır; doluysa `LiveDecision.suppress_suggestions=True` → rotasyon/slot önerileri O
+  KOŞUDA bastırılır (yanlış temele dayalı öneri, öneri yokluğundan tehlikelidir). Satış
+  uyarısı + gözlem yine üretilir (okunabilen veri üzerinden savunmacı/bilgilendirici).
+- **Slack:** uyarı varsa mesajın EN ÜSTÜNDE (header'dan hemen sonra, özetten önce)
+  "⚠️ X pozisyon satırı okunamadı … öneriler bastırıldı" bloğu gösterilir. Uyarı yoksa
+  yeni blok eklenmez → mevcut altın-dosya snapshot'ları korunur.
+- **Testler:** `test_sheets.py`'ye virgüllü fiyat/adet/NAKİT + belirsiz/geçersiz-değer +
+  uyarı-sıfırlama; `test_rotation_live.py`'ye öneri-bastırma; `test_slack.py`'ye
+  en-üstte-uyarı render. Tüm suite yeşil (208 test).
+
 ## FAZ D — Düşük bütçeli canlı dönem ve devreye alma · ✅ TAMAM
 
 Dal `feature/live-switchover`; her görev ayrı commit; testler yeşil.
