@@ -371,6 +371,24 @@ budget_max-yerine-nakit ölçek + deployment_pct=95/50 ölçekleme ispatı),
   `test_rotation_competition.py`; `test_rotation_scoring.py` (`score_series`).
 - Çalıştırma: `python -m pytest -q`.
 
+## Gözlem satırı: sepet-içi sıra (yalnız görüntüleme) · ✅ TAMAM
+
+Dal `feature/observation-basket-rank`. Günlük gözlem mesajındaki "📌 Portföy sıraları"
+satırı her sembol için hem küresel sırayı hem sepet-içi sırayı gösterir:
+`SPY #1 (Düşük Vol #1/20), _MO #17 (Düşük Vol #9/20)_`.
+
+| Parça | Nerede | Ne |
+|------|--------|----|
+| Sepet-içi sıra | `slots.py` `basket_rank_map` | Sıra `alerts.collapse_rank_map`'ten gelir — **ranking_collapse tetiğiyle AYNI taban** (tek doğruluk kaynağı, Görev A cooldown birleştirme ilkesi). Sepet boyutu (`/20`) sıralamada o sepette görülen sembol sayısıdır. |
+| Eşik vurgusu | `slots.py` `BasketRank.over_threshold` | Sepet-içi sıra `collapse_cutoff` (per_basket'te 2×2=4) dışındaysa satır hafif **italik** vurgulanır — sert uyarı değil, göz atışta fark edilsin diye. |
+| Render | `slots.py` `render_observation_lines(basket_label=…)` | Sepet anahtarı→görünen ad (Düşük Vol vb.) `slack._basket_label` ile geçirilir; slots→notify bağımlılığı yok. |
+| Bağlama | `live.py` `_build_observation` | `ranking_today` (çöküş taramasıyla aynı sıralama) üzerinden `basket_rank_map` çağrılır. |
+
+**Kapsam:** yalnız görüntüleme — skorlama/seçim/karar mantığına dokunulmadı.
+`portfolio_ranks` (küresel sıra) yapısı korundu; sepet-içi bilgi ayrı `basket_ranks`
+alanında. Snapshot `slack_watch_day.json` yeni biçimi gösterecek şekilde yenilendi.
+Testler: `test_rotation_slots.py` +4 (ortak-taban, eşik işareti, render biçimi/vurgu).
+
 ## Sıradaki
 - ⏸ **İNSAN ONAYI:** Faz C/D kod tamam ama gerçek Slack/Sheets'e karşı canlı deneme
   YAPILMADI (kullanıcı talebi). İlk canlı koşu insan gözetiminde ELLE tetiklenmeli

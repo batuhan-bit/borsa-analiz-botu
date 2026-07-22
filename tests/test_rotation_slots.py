@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from bot.config import Strategy
 from bot.rotation import (
+    basket_rank_map,
     daily_observation,
     render_observation_lines,
     slot_candidates,
 )
-from bot.rotation.slots import has_action_language
+from bot.rotation.alerts import collapse_cutoff, collapse_rank_map
+from bot.rotation.slots import BasketRank, has_action_language
 
 
 def _strategy(**rotation_overrides) -> Strategy:
@@ -126,3 +128,55 @@ def test_observation_portfolio_rank_none_when_unranked():
     assert obs.portfolio_ranks == {"ZZZ": None}
     lines = render_observation_lines(obs)
     assert any("ZZZ #—" in ln for ln in lines)
+
+
+# ---------------- sepet-içi sıra (gözlem) ----------------
+
+def test_basket_rank_map_uses_collapse_base():
+    """Sepet-içi sıra çöküş testiyle AYNI fonksiyondan gelir (tek doğruluk kaynağı)."""
+    strat = _strategy(selection="per_basket")
+    lv = [s for s in strat.universe_symbols if strat.basket_of(s) == "low_volatility"][:3]
+    # Küresel sıralama: 3 low_vol sembolü sepet-içi #1..#3
+    ranking = [(s, 0.9 - i * 0.01) for i, s in enumerate(lv)]
+    rmap = collapse_rank_map(strat, ranking)
+    bmap = basket_rank_map(strat, ranking, holdings=lv)
+    for s in lv:
+        assert bmap[s].rank == rmap[s]            # çöküş tabanıyla birebir
+        assert bmap[s].basket == "low_volatility"
+        assert bmap[s].size == 3                  # sepette 3 sembol görüldü
+
+
+def test_basket_rank_map_flags_over_threshold():
+    """Sepet-içi sıra çöküş eşiğinin (per_basket) dışındaysa over_threshold=True."""
+    strat = _strategy(selection="per_basket")
+    cutoff = collapse_cutoff(strat)               # varsayılan 2×2 = 4
+    lv = [s for s in strat.universe_symbols if strat.basket_of(s) == "low_volatility"][:cutoff + 1]
+    ranking = [(s, 0.9 - i * 0.01) for i, s in enumerate(lv)]
+    bmap = basket_rank_map(strat, ranking, holdings=lv)
+    assert bmap[lv[0]].over_threshold is False    # sepet-içi #1
+    assert bmap[lv[cutoff]].over_threshold is True  # sepet-içi #(cutoff+1) -> eşik dışı
+
+
+def test_render_observation_shows_basket_and_size():
+    obs = daily_observation(
+        {"MO": 17}, {}, holdings=["MO"], top_n=6,
+        basket_ranks={"MO": BasketRank("low_volatility", 9, 20, over_threshold=True)},
+    )
+    lines = render_observation_lines(obs, basket_label=lambda b: "Düşük Vol")
+    rank_line = next(ln for ln in lines if "Portföy sıraları" in ln)
+    # Küresel sıra + sepet-içi sıra/boyut birlikte
+    assert "MO #17 (Düşük Vol #9/20)" in rank_line
+    # Eşik dışı -> hafif italik vurgu; sert uyarı işareti değil
+    assert "_MO #17 (Düşük Vol #9/20)_" in rank_line
+    assert not has_action_language(lines)
+
+
+def test_render_observation_no_emphasis_within_threshold():
+    obs = daily_observation(
+        {"MU": 1}, {}, holdings=["MU"], top_n=6,
+        basket_ranks={"MU": BasketRank("high_volatility", 1, 20, over_threshold=False)},
+    )
+    lines = render_observation_lines(obs, basket_label=lambda b: "Yüksek Vol")
+    rank_line = next(ln for ln in lines if "Portföy sıraları" in ln)
+    assert "MU #1 (Yüksek Vol #1/20)" in rank_line
+    assert "_MU" not in rank_line                 # eşik içi -> vurgu yok

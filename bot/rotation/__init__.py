@@ -52,9 +52,11 @@ from .cooldown_store import (
 )
 from .sizing import SizedPosition, size_positions
 from .slots import (
+    BasketRank,
     Observation,
     RankMover,
     SlotCandidate,
+    basket_rank_map,
     daily_observation,
     render_observation_lines,
     slot_candidates,
@@ -74,6 +76,8 @@ __all__ = [
     "SlotCandidate",
     "slot_candidates",
     "Observation",
+    "BasketRank",
+    "basket_rank_map",
     "RankMover",
     "daily_observation",
     "render_observation_lines",
