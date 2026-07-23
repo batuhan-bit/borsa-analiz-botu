@@ -9,7 +9,7 @@ from datetime import date
 
 from bot.rotation.alerts import SellAlert, SellTrigger, TriggerType
 from bot.rotation.live import BuySuggestion, ExitSuggestion, LiveDecision, RebalanceNote
-from bot.rotation.slots import Observation, RankMover
+from bot.rotation.slots import BasketRank, Observation, RankMover
 
 
 def rotation_decision() -> LiveDecision:
@@ -48,5 +48,14 @@ def watch_decision() -> LiveDecision:
         slot_fills=[BuySuggestion(
             "XLU", "low_volatility", "utilities", 0.2, 80.0, 12.0, 960.0, 4,
             "boşalan low_volatility slotu için en yüksek uygun aday (sırada #4)")],
-        observation=Observation(top_movers=[], portfolio_ranks={"SPY": 1}),
+        observation=Observation(
+            top_movers=[],
+            # SPY sepet-içi #1 (eşik içi); MO sepet-içi #9 -> per_basket eşiği (4) dışı,
+            # gözlemde hafif italik vurguyla gösterilir.
+            portfolio_ranks={"SPY": 1, "MO": 17},
+            basket_ranks={
+                "SPY": BasketRank("low_volatility", 1, 20, over_threshold=False),
+                "MO": BasketRank("low_volatility", 9, 20, over_threshold=True),
+            },
+        ),
     )

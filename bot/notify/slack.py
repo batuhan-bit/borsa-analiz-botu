@@ -186,7 +186,7 @@ class SlackNotifier:
 
         # --- Günlük gözlem (eylemsiz) ---
         if decision.observation is not None:
-            obs_lines = render_observation_lines(decision.observation)
+            obs_lines = render_observation_lines(decision.observation, basket_label=_basket_label)
             if len(obs_lines) > 2:      # başlık + disclaimer'dan fazlası varsa
                 blocks.append({"type": "divider"})
                 blocks.extend(_chunk_sections(obs_lines))

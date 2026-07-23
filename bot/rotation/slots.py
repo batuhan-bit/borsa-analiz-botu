@@ -15,9 +15,10 @@ Canlı akışa (Sheets satış tespiti, takvim) bağlanması Faz C'dedir.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 from ..config import Strategy
+from .alerts import collapse_cutoff, collapse_rank_map
 
 
 @dataclass(frozen=True)
@@ -129,9 +130,55 @@ class RankMover:
 
 
 @dataclass(frozen=True)
+class BasketRank:
+    """Bir sembolün SEPET-İÇİ sıra bilgisi (yalnız görüntüleme; skorlamaya girmez).
+
+    rank/size çöküş testiyle AYNI tabandan gelir (bkz. basket_rank_map). over_threshold,
+    sembol çöküş eşiğinin (collapse_cutoff — per_basket'te
+    ranking_collapse_multiple × positions_per_basket) dışına çıkmışsa True olur; bu yalnız
+    gözlemde hafif bir vurgu işaretidir, karar/uyarı mantığı DEĞİLDİR.
+    """
+    basket: str | None            # sepet anahtarı (low_volatility vb.)
+    rank: int | None              # sepet-içi sıra (1 = sepetin en yükseği)
+    size: int | None              # sepette sıralamada görülen sembol sayısı
+    over_threshold: bool = False  # çöküş eşiğinin dışında mı (hafif vurgu)
+
+
+@dataclass(frozen=True)
 class Observation:
     top_movers: list[RankMover] = field(default_factory=list)
     portfolio_ranks: dict[str, int | None] = field(default_factory=dict)
+    basket_ranks: dict[str, BasketRank] = field(default_factory=dict)
+
+
+def basket_rank_map(
+    strategy: Strategy,
+    ranking: Sequence[tuple[str, float]],
+    holdings: Iterable[str],
+) -> dict[str, BasketRank]:
+    """Portföydeki her sembol için sepet-içi sıra bilgisini üret (yalnız görüntüleme).
+
+    Sepet-içi sıra `collapse_rank_map`'ten gelir — ranking_collapse tetiğiyle AYNI
+    sıralama tabanı (tek doğruluk kaynağı). `over_threshold`, sembolün çöküş eşiğinin
+    (`collapse_cutoff`) dışına çıkıp çıkmadığını işaretler; skorlama/seçim/karar
+    mantığını etkilemez, yalnız gözlem satırında hafif vurgu içindir.
+    """
+    rmap = collapse_rank_map(strategy, ranking)
+    cutoff = collapse_cutoff(strategy)
+    sizes: dict[str | None, int] = {}
+    for sym, _score in ranking:
+        b = strategy.basket_of(sym)
+        sizes[b] = sizes.get(b, 0) + 1
+    out: dict[str, BasketRank] = {}
+    for s in holdings:
+        sym = s.strip().upper()
+        b = strategy.basket_of(sym)
+        rank = rmap.get(sym)
+        out[sym] = BasketRank(
+            basket=b, rank=rank, size=sizes.get(b),
+            over_threshold=rank is not None and rank > cutoff,
+        )
+    return out
 
 
 # Gözlem bölümünde ASLA bulunmaması gereken eylem/imperatif dili (kabul kriteri).
@@ -148,13 +195,16 @@ def daily_observation(
     *,
     top_n: int,
     max_movers: int = 3,
+    basket_ranks: Mapping[str, BasketRank] | None = None,
 ) -> Observation:
     """Eylemsiz gözlem verisi üret.
 
     rank_now / rank_past: symbol -> sıra (1 tabanlı), güncel ve N gün önceki.
     Yükselenler: ŞU AN ilk-N DIŞINDA olup son N günde sırası yükselen (improvement>0)
     semboller; en çok yükselen `max_movers` tanesi.
-    portfolio_ranks: portföydeki her sembolün güncel sırası (yoksa None).
+    portfolio_ranks: portföydeki her sembolün güncel (küresel) sırası (yoksa None).
+    basket_ranks   : sembol -> sepet-içi sıra bilgisi (bkz. basket_rank_map); yalnız
+                     görüntüleme, verilmezse boş.
     """
     movers: list[RankMover] = []
     for sym, new_rank in rank_now.items():
@@ -170,18 +220,52 @@ def daily_observation(
 
     portfolio_ranks = {s.strip().upper(): rank_now.get(s.strip().upper())
                        for s in holdings}
-    return Observation(top_movers=movers[:max_movers], portfolio_ranks=portfolio_ranks)
+    return Observation(
+        top_movers=movers[:max_movers],
+        portfolio_ranks=portfolio_ranks,
+        basket_ranks=dict(basket_ranks or {}),
+    )
 
 
-def render_observation_lines(obs: Observation) -> list[str]:
-    """Gözlemi Slack için EYLEMSİZ metin satırlarına çevir (imperatif dil yok)."""
+def _portfolio_rank_str(
+    sym: str, global_rank: int | None, br: BasketRank | None,
+    basket_label: Callable[[str | None], str],
+) -> str:
+    """Tek sembol için 'MO #17 (Düşük Vol #9/20)' biçimini üret.
+
+    Sepet-içi sıra varsa küresel sıranın yanında parantezle gösterilir. Sembol çöküş
+    eşiğinin dışındaysa (br.over_threshold) satır hafifçe italik vurgulanır — sert uyarı
+    değil, göz atışta fark edilsin diye.
+    """
+    grank = global_rank if global_rank is not None else "—"
+    if br is not None and br.rank is not None:
+        size = f"/{br.size}" if br.size else ""
+        core = f"{sym} #{grank} ({basket_label(br.basket)} #{br.rank}{size})"
+    else:
+        core = f"{sym} #{grank}"
+    if br is not None and br.over_threshold:
+        core = f"_{core}_"      # eşik dışı: hafif italik vurgu
+    return core
+
+
+def render_observation_lines(
+    obs: Observation,
+    *,
+    basket_label: Callable[[str | None], str] | None = None,
+) -> list[str]:
+    """Gözlemi Slack için EYLEMSİZ metin satırlarına çevir (imperatif dil yok).
+
+    basket_label: sepet anahtarını görünen ada çeviren fonksiyon (ör. slack._basket_label);
+    verilmezse anahtar olduğu gibi kullanılır.
+    """
+    label = basket_label or (lambda b: b if b is not None else "—")
     lines: list[str] = ["*📊 Günlük gözlem*", _OBS_DISCLAIMER]
     if obs.top_movers:
         movers = ", ".join(f"{m.symbol} (#{m.old_rank}→#{m.new_rank})" for m in obs.top_movers)
         lines.append(f"📈 Sırada yükselen (ilk-N dışı): {movers}")
     if obs.portfolio_ranks:
         ranks = ", ".join(
-            f"{sym} #{rank if rank is not None else '—'}"
+            _portfolio_rank_str(sym, rank, obs.basket_ranks.get(sym), label)
             for sym, rank in obs.portfolio_ranks.items()
         )
         lines.append(f"📌 Portföy sıraları: {ranks}")

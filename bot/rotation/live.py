@@ -45,7 +45,7 @@ from .alerts import (
 from .calendar import is_rotation_day
 from .engine import RotationEngine, RotationPlan
 from .scoring import make_ranker
-from .slots import Observation, daily_observation, slot_candidates
+from .slots import Observation, basket_rank_map, daily_observation, slot_candidates
 
 log = logging.getLogger(__name__)
 
@@ -330,7 +330,8 @@ def run_live_flow(
 
     # --- 4) Günlük gözlem (her gün, eylemsiz) ---
     decision.observation = _build_observation(
-        ranking_as_of, trimmed, today_index, held, top_n, observation_lookback)
+        strategy, ranking_as_of, ranking_today, trimmed, today_index, held,
+        top_n, observation_lookback)
 
     # Karne (Görev C.2) için sinyal-günü fiyatları: ilgili tüm semboller
     relevant = set(held) | {a.symbol for a in decision.sell_alerts}
@@ -472,8 +473,11 @@ def _build_rotation(decision, strategy, engine, rank_fn, holdings, held_set,
             target_weight=a.target_weight, drift_pct=a.drift_pct))
 
 
-def _build_observation(ranking_as_of, calendar, today_index, holdings, top_n, lookback) -> Observation:
+def _build_observation(strategy, ranking_as_of, ranking_today, calendar, today_index,
+                       holdings, top_n, lookback) -> Observation:
     rank_now = {sym: i for i, (sym, _) in enumerate(ranking_as_of(calendar[today_index]), start=1)}
     past_i = max(0, today_index - lookback)
     rank_past = {sym: i for i, (sym, _) in enumerate(ranking_as_of(calendar[past_i]), start=1)}
-    return daily_observation(rank_now, rank_past, holdings, top_n=top_n)
+    # Sepet-içi sıra, çöküş tetiğiyle AYNI sıralamadan (ranking_today) üretilir.
+    baskets = basket_rank_map(strategy, ranking_today, holdings)
+    return daily_observation(rank_now, rank_past, holdings, top_n=top_n, basket_ranks=baskets)
