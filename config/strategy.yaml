@@ -149,6 +149,9 @@ notification:
   channel: slack
   frequency: daily
   send_after_market_close: true
+  # Gönderim güvenlik kapıları (canlı akış sahte/bayat veri göndermesin):
+  max_report_age_days: 3          # (A) karar tarihi bugünden bu kadar günden eskiyse gönderim engellenir
+  abort_on_unreadable_data: true  # (B) fiyat verisi boş / geçerli işlem günü yoksa gönderme, hata ver
 
 # --- Backtesting (v1 eşik motoru) ---
 backtest:

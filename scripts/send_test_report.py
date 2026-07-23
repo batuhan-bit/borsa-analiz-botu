@@ -3,15 +3,21 @@
 Raporu elle kurulmuş bir Observation'dan DEĞİL, gerçek `run_live_flow` hattından
 üretir (böylece `_build_observation` → `basket_rank_map` → `SlackNotifier` gerçek
 kod yolundan geçer). Ağ/Sheets gerekmez: bar'lar sentetik-ama-deterministiktir,
-semboller gerçek evrenden alınır; sepet-içi sıra ve eşik-dışı (over_threshold)
-vurgusu gerçek config eşiğiyle (`collapse_cutoff`) hesaplanır.
+semboller gerçek evrenden alınır.
+
+GÜVENLİK (C): Bu script sentetik veri üretir; üretim kanalına DÜŞMEMESİ için:
+  - Kararı `synthetic=True` işaretler (SlackNotifier üretim webhook'una reddeder).
+  - Yalnız AYRI `SLACK_TEST_WEBHOOK_URL` ortam değişkenini okur; üretim
+    `SLACK_WEBHOOK_URL`'ini ASLA kullanmaz. İkisi aynıysa gönderimi reddeder.
+  - Gerçek gönderim için `--send` YANINDA `--i-know-this-is-synthetic` gerekir.
 
 Kullanım:
   # Önizleme (ağ YOK — render edilen gözlem satırını yazdırır):
   python -m scripts.send_test_report
 
-  # Gerçek gönderim (SLACK_WEBHOOK_URL ayarlı olmalı):
-  SLACK_WEBHOOK_URL="https://hooks.slack.com/services/XXX" python -m scripts.send_test_report --send
+  # Gerçek gönderim (AYRI test kanalı):
+  SLACK_TEST_WEBHOOK_URL="https://hooks.slack.com/services/TEST" \
+      python -m scripts.send_test_report --send --i-know-this-is-synthetic
 """
 from __future__ import annotations
 
@@ -66,22 +72,40 @@ def _real_decision():
          "entry_date": None}
         for sym, basket in _HELD
     ]
-    return strategy, run_live_flow(
+    decision = run_live_flow(
         strategy, bars, holdings, cooldown=AlertCooldown(cooldown_days=5),
         today=_WATCH_DAY, portfolio_value=5000, cash=1000.0,
     )
+    decision.synthetic = True    # (C) üretim webhook'una gitmesin
+    return strategy, decision
+
+
+def _resolve_test_webhook() -> str:
+    """Yalnız AYRI test webhook'unu döndür; üretimle karışmayı reddet."""
+    test_url = os.getenv("SLACK_TEST_WEBHOOK_URL", "")
+    prod_url = os.getenv("SLACK_WEBHOOK_URL", "")
+    if not test_url:
+        raise SystemExit(
+            "HATA: SLACK_TEST_WEBHOOK_URL ayarlı değil. Bu script sentetik veri üretir ve "
+            "yalnız AYRI bir test webhook'una gönderir; üretim SLACK_WEBHOOK_URL'ini kullanmaz.")
+    if prod_url and test_url == prod_url:
+        raise SystemExit(
+            "HATA: SLACK_TEST_WEBHOOK_URL, üretim SLACK_WEBHOOK_URL ile AYNI — sentetik veri "
+            "üretim kanalına gönderilemez. Farklı bir test webhook'u kullanın.")
+    return test_url
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--send", action="store_true", help="Slack'e gerçekten gönder")
+    ap.add_argument("--i-know-this-is-synthetic", dest="ack_synthetic",
+                    action="store_true", help="Sentetik veri gönderdiğini onayla (--send ile zorunlu)")
     args = ap.parse_args()
 
     strategy, decision = _real_decision()
-    notifier = SlackNotifier(os.getenv("SLACK_WEBHOOK_URL", ""))
-    payload = notifier.format_message(decision)
+    payload = SlackNotifier("preview").format_message(decision)
 
-    print(f"[gerçek pipeline] izleme günü {decision.as_of} · collapse_cutoff="
+    print(f"[gerçek pipeline · SENTETİK] izleme günü {decision.as_of} · collapse_cutoff="
           f"{collapse_cutoff(strategy)} (sepet-içi sıra bunun üstündeyse italik)")
     for b in payload["blocks"]:
         t = b.get("text", {})
@@ -90,15 +114,19 @@ def main() -> int:
     print("-" * 60)
 
     if not args.send:
-        print("[önizleme] Gönderim yapılmadı. Göndermek için: --send (SLACK_WEBHOOK_URL gerekli)")
+        print("[önizleme] Gönderim yapılmadı. Göndermek için: --send --i-know-this-is-synthetic "
+              "(SLACK_TEST_WEBHOOK_URL gerekli)")
         return 0
 
-    if not os.getenv("SLACK_WEBHOOK_URL"):
-        print("HATA: SLACK_WEBHOOK_URL ayarlı değil; gönderim yapılamadı.", file=sys.stderr)
+    if not args.ack_synthetic:
+        print("HATA: --send yalnız --i-know-this-is-synthetic ile birlikte kullanılabilir "
+              "(sentetik veri gönderdiğinizi onaylayın).", file=sys.stderr)
         return 1
 
-    notifier.send(decision)
-    print("[gönderildi] Slack webhook'una POST edildi.")
+    test_url = _resolve_test_webhook()
+    # allow_synthetic=True yalnız AYRI test kanalında; yaş kapısı yok (veri kasıtlı eski).
+    SlackNotifier(test_url, allow_synthetic=True).send(decision)
+    print("[gönderildi] Test webhook'una POST edildi.")
     return 0
 
 

@@ -7,12 +7,20 @@ v1 eşik BUY/SELL/HOLD biçiminin TAMAMEN kaldırıldığı da doğrulanır.
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
+
+import pytest
 
 from bot.notify import SlackNotifier
 from tests.slack_fixtures import rotation_decision, summary_decision, watch_decision
 
 SNAP = Path(__file__).resolve().parent / "snapshots"
+
+
+class _OkResp:
+    status_code = 200
+    text = "ok"
 
 
 def _texts(payload) -> str:
@@ -118,3 +126,64 @@ def test_block_and_section_limits_respected():
     for b in payload["blocks"]:
         if b.get("type") == "section":
             assert len(b["text"]["text"]) <= 3000
+
+
+# ---------------- gönderim güvenlik kapıları (A + C) ----------------
+
+def test_send_blocks_stale_report(monkeypatch):
+    """(A) Karar tarihi eşiği aşacak kadar eskiyse gönderim engellenir, POST edilmez."""
+    posted = []
+    monkeypatch.setattr("bot.notify.slack.requests.post",
+                        lambda *a, **k: posted.append(1) or _OkResp())
+    n = SlackNotifier("http://x", max_report_age_days=3)
+    d = watch_decision()                        # as_of 2026-07-08
+    with pytest.raises(ValueError, match="eski"):
+        n.send(d, today=date(2026, 8, 1))       # ~24 gün eski
+    assert not posted                           # hiç POST yapılmadı
+
+
+def test_send_allows_fresh_report(monkeypatch):
+    """(A) Tarih eşik içindeyse normal gönderilir."""
+    posted = []
+    monkeypatch.setattr("bot.notify.slack.requests.post",
+                        lambda url, **k: (posted.append(url), _OkResp())[1])
+    n = SlackNotifier("http://x", max_report_age_days=3)
+    d = watch_decision()                        # as_of 2026-07-08
+    n.send(d, today=date(2026, 7, 9))           # 1 gün -> geçer
+    assert posted == ["http://x"]
+
+
+def test_send_blocks_synthetic_to_prod(monkeypatch):
+    """(C) Sentetik karar üretim webhook'una (allow_synthetic=False) gönderilemez."""
+    posted = []
+    monkeypatch.setattr("bot.notify.slack.requests.post",
+                        lambda *a, **k: posted.append(1) or _OkResp())
+    n = SlackNotifier("http://prod")            # allow_synthetic varsayılan False
+    d = watch_decision()
+    d.synthetic = True
+    with pytest.raises(ValueError, match="[Ss]entetik"):
+        n.send(d, today=date(2026, 7, 9))
+    assert not posted
+
+
+def test_send_allows_synthetic_on_test_channel(monkeypatch):
+    """(C) allow_synthetic=True olan ayrı kanala sentetik karar gönderilebilir."""
+    posted = []
+    monkeypatch.setattr("bot.notify.slack.requests.post",
+                        lambda url, **k: (posted.append(url), _OkResp())[1])
+    n = SlackNotifier("http://test", allow_synthetic=True)   # yaş kapısı yok
+    d = watch_decision()
+    d.synthetic = True
+    n.send(d, today=date(2026, 7, 9))
+    assert posted == ["http://test"]
+
+
+def test_no_age_gate_when_unset(monkeypatch):
+    """max_report_age_days=None iken eski tarih de gönderilir (kapı kapalı)."""
+    posted = []
+    monkeypatch.setattr("bot.notify.slack.requests.post",
+                        lambda url, **k: (posted.append(url), _OkResp())[1])
+    n = SlackNotifier("http://x")               # yaş kapısı yok
+    d = watch_decision()
+    n.send(d, today=date(2030, 1, 1))
+    assert posted == ["http://x"]

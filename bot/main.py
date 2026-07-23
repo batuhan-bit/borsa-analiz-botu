@@ -74,6 +74,27 @@ def _print_summary(decision) -> None:
         print(f"🟢 Slot adayları: {[b.symbol for b in decision.slot_fills]}")
 
 
+def _assert_live_data(strategy, bars, decision) -> None:
+    """Canlı akış veri-bütünlüğü kapısı (B): gerçek veri yoksa GÖNDERME, hata ver.
+
+    Canlı akış hiçbir koşulda sentetik/eksik veriyle bildirim üretmemeli. Fiyat verisi
+    (bars) tümden boşsa (kaynak başarısız) ya da geçerli işlem günü yoksa
+    (today_index<0), mesaj göndermek yerine RuntimeError fırlatılır — sessizce bozuk
+    rapor yollamaktansa gürültülü başarısızlık yeğdir. `notification.
+    abort_on_unreadable_data: false` ile kapatılabilir (varsayılan açık).
+    """
+    if not strategy.notification.get("abort_on_unreadable_data", True):
+        return
+    if not bars:
+        raise RuntimeError(
+            "Canlı akış veri kapısı: fiyat verisi (bars) BOŞ — bildirim iptal "
+            "(sahte/eksik veriyle rapor gönderilmez).")
+    if decision.today_index < 0:
+        raise RuntimeError(
+            "Canlı akış veri kapısı: geçerli işlem günü yok (today_index<0) — "
+            "bildirim iptal.")
+
+
 def main() -> None:
     settings = Settings.load(strict=True)
     strategy = settings.strategy
@@ -148,8 +169,15 @@ def main() -> None:
 
     _print_summary(decision)
 
-    # 6. Slack v2 rotasyon bildirimi (webhook yoksa güvenle atlanır)
-    SlackNotifier(sec.slack_webhook_url).send(decision)
+    # 6. Gönderim öncesi veri-bütünlüğü kapısı (B): boş/geçersiz veride HATA, gönderme.
+    _assert_live_data(strategy, bars, decision)
+
+    # 7. Slack v2 rotasyon bildirimi (webhook yoksa güvenle atlanır).
+    # Kapılar: bayat-tarih (A, max_report_age_days) + sentetik-reddi (C, allow_synthetic=False).
+    max_age = int(strategy.notification.get("max_report_age_days", 3))
+    SlackNotifier(
+        sec.slack_webhook_url, max_report_age_days=max_age, allow_synthetic=False
+    ).send(decision)
 
 
 if __name__ == "__main__":
