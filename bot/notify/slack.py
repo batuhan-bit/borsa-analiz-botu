@@ -15,6 +15,7 @@ format_message ağdan bağımsız test edilebilir (snapshot); send yalnızca POS
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 import requests
 
@@ -118,8 +119,21 @@ def _titled_section(blocks: list[dict], title: str, lines: list[str]) -> None:
 
 
 class SlackNotifier:
-    def __init__(self, webhook_url: str) -> None:
+    def __init__(
+        self, webhook_url: str, *,
+        max_report_age_days: int | None = None,
+        allow_synthetic: bool = False,
+    ) -> None:
+        """webhook_url: Slack Incoming Webhook.
+
+        max_report_age_days: doluysa, karar tarihi (as_of) bugünden bu kadar günden
+          ESKİYSE gönderim ENGELLENİR (bayat/sahte veri koruması — A). None = kapalı.
+        allow_synthetic: False iken sentetik (LiveDecision.synthetic=True) karar
+          gönderilmez (C). Yalnız ayrı test webhook'unda True verilir.
+        """
         self._webhook_url = webhook_url
+        self._max_report_age_days = max_report_age_days
+        self._allow_synthetic = allow_synthetic
 
     def format_message(self, decision: LiveDecision) -> dict:
         """LiveDecision'ı Slack mesaj gövdesine (blocks + fallback text) çevir."""
@@ -202,11 +216,33 @@ class SlackNotifier:
 
         return {"text": f"{header} — {summary}", "blocks": blocks}
 
-    def send(self, decision: LiveDecision) -> None:
-        """Rotasyon kararını Slack webhook'una gönder."""
+    def _assert_sendable(self, decision: LiveDecision, today: date) -> None:
+        """Gönderim öncesi güvenlik kapıları. İhlalde ValueError (POST YAPILMAZ).
+
+        C) Sentetik karar üretim webhook'una gönderilemez (allow_synthetic gerekir).
+        A) Karar tarihi bugünden max_report_age_days'ten eskiyse gönderim engellenir.
+        Bu iki kapı, sentetik/bayat verinin (ör. 2022 tarihli test fixture'ı) gerçek
+        kanala düşmesini yapısal olarak önler.
+        """
+        if getattr(decision, "synthetic", False) and not self._allow_synthetic:
+            raise ValueError(
+                "Sentetik LiveDecision üretim webhook'una gönderilemez "
+                "(allow_synthetic=False). Test için ayrı SLACK_TEST_WEBHOOK_URL kullanın.")
+        if self._max_report_age_days is not None:
+            age = (today - decision.as_of).days
+            if age > self._max_report_age_days:
+                raise ValueError(
+                    f"Rapor tarihi {decision.as_of.isoformat()} bugünden "
+                    f"({today.isoformat()}) {age} gün eski; sınır "
+                    f"{self._max_report_age_days}g — gönderim engellendi "
+                    f"(bayat/sahte veri koruması).")
+
+    def send(self, decision: LiveDecision, *, today: date | None = None) -> None:
+        """Rotasyon kararını Slack webhook'una gönder (güvenlik kapılarından geçirerek)."""
         if not self._webhook_url:
             log.warning("SLACK_WEBHOOK_URL boş — bildirim atlanıyor.")
             return
+        self._assert_sendable(decision, today or date.today())
         payload = self.format_message(decision)
         resp = requests.post(self._webhook_url, json=payload, timeout=30)
         if resp.status_code != 200 or resp.text.strip().lower() != "ok":

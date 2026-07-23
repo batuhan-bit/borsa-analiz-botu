@@ -113,6 +113,10 @@ class LiveDecision:
     # bu koşuda BASTIRILIR (öneri yokluğu, yanlış öneriden güvenlidir).
     read_warnings: list[str] = field(default_factory=list)
     suppress_suggestions: bool = False
+    # Sentetik/test verisinden üretilen karar (ör. scripts/send_test_report). Üretim
+    # webhook'una gönderilmesi SlackNotifier tarafından REDDEDİLİR (allow_synthetic
+    # gerekir). Canlı akış bunu ASLA True yapmaz. Bkz. results/gorev_sahte_veri_fix.md.
+    synthetic: bool = False
 
 
 # ----------------------------------------------------------------------

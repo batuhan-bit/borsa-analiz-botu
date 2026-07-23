@@ -6,13 +6,19 @@ uçtan uca hatasız koştuğunu ve v1 motoruna DOKUNMADIĞINI doğrulamak.
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
 import bot.main as main_mod
 import bot.notify.slack as slack_mod
+from bot.config import Strategy
+from bot.rotation.live import LiveDecision
 
-INDEX = pd.bdate_range(end="2022-06-01", periods=200)
+# as_of güncel olmalı: bayat-tarih kapısı (A) canlı akışta 3 günden eski raporu
+# engeller; smoke testi gerçek gönderimi doğruladığı için bar'lar BUGÜNDE biter.
+INDEX = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=200)
 RATES = {"SPY": 1.005, "XLU": 1.004, "NVDA": 1.006, "AMD": 1.005,
          "IONQ": 1.005, "RGTI": 1.004}
 
@@ -47,6 +53,59 @@ def test_main_runs_end_to_end_without_network(monkeypatch):
     assert "blocks" in payload
     # v2 başlığı; v1 "Borsa Analizi" / eşik dili değil
     assert "Rotasyon" in payload["text"]
+
+
+def _decision(today_index: int) -> LiveDecision:
+    return LiveDecision(as_of=date.today(), frequency="biweekly",
+                        is_rotation_day=False, today_index=today_index)
+
+
+# ---------------- (B) veri-bütünlüğü kapısı ----------------
+
+def test_assert_live_data_raises_on_empty_bars():
+    with pytest.raises(RuntimeError, match="bars"):
+        main_mod._assert_live_data(Strategy.load(), {}, _decision(3))
+
+
+def test_assert_live_data_raises_on_invalid_today_index():
+    with pytest.raises(RuntimeError, match="işlem günü"):
+        main_mod._assert_live_data(Strategy.load(), {"SPY": object()}, _decision(-1))
+
+
+def test_assert_live_data_passes_with_real_data():
+    # Boş olmayan bars + geçerli işlem günü -> hata YOK
+    main_mod._assert_live_data(Strategy.load(), {"SPY": object()}, _decision(5))
+
+
+# ---------------- (C) test script'i üretim webhook'unu kullanamaz ----------------
+
+def test_test_report_decision_is_synthetic():
+    from scripts.send_test_report import _real_decision
+    _strat, d = _real_decision()
+    assert d.synthetic is True
+
+
+def test_test_report_refuses_missing_test_webhook(monkeypatch):
+    from scripts.send_test_report import _resolve_test_webhook
+    monkeypatch.delenv("SLACK_TEST_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "http://prod")
+    with pytest.raises(SystemExit):
+        _resolve_test_webhook()                 # ayrı test webhook'u yok -> reddet
+
+
+def test_test_report_refuses_prod_equal_test_webhook(monkeypatch):
+    from scripts.send_test_report import _resolve_test_webhook
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "http://same")
+    monkeypatch.setenv("SLACK_TEST_WEBHOOK_URL", "http://same")
+    with pytest.raises(SystemExit):
+        _resolve_test_webhook()                 # üretimle aynı -> reddet
+
+
+def test_test_report_accepts_distinct_test_webhook(monkeypatch):
+    from scripts.send_test_report import _resolve_test_webhook
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "http://prod")
+    monkeypatch.setenv("SLACK_TEST_WEBHOOK_URL", "http://test")
+    assert _resolve_test_webhook() == "http://test"
 
 
 def test_legacy_engine_is_importable_but_not_used_by_main():

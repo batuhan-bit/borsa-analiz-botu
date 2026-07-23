@@ -389,6 +389,26 @@ satırı her sembol için hem küresel sırayı hem sepet-içi sırayı gösteri
 alanında. Snapshot `slack_watch_day.json` yeni biçimi gösterecek şekilde yenilendi.
 Testler: `test_rotation_slots.py` +4 (ortak-taban, eşik işareti, render biçimi/vurgu).
 
+## Teşhis + koruma: Slack'e sahte-veri raporu düştü · ✅ TAMAM
+
+Dal `feature/live-send-guards`. Belirti: Slack'e 2022-06-08 tarihli, SPY/COST/NVDA/IONQ
+portföylü, RGTI ~$329'lık gerçek-dışı rapor düştü.
+
+**Kök neden (kanıtlı):** Mesaj `bot.main`'den DEĞİL, `scripts/send_test_report.py`
+test script'inden geldi — script üretimle AYNI `SLACK_WEBHOOK_URL`'i okuyup yerel
+`--send` ile gerçek kanala POST etti. Gerçek pipeline sahte veriye düşmedi (bugünkü
+07:44 UTC koşu logu: `Portföy (6): MO, MRK, LUNR, MU, MRVL, POWL`). Merge sonrası
+koşu yoktu; PR veri kaynağını/`as_of`'u etkilemedi. Ayrıntı: `results/gorev_sahte_veri_fix.md`.
+
+**Yapısal koruma (3 katman):**
+| Kat | Nerede | Ne |
+|-----|--------|----|
+| A — bayat-tarih | `SlackNotifier.send` | `as_of` bugünden `notification.max_report_age_days`(3)'ten eskiyse `ValueError`, POST yok. |
+| B — veri bütünlüğü | `bot.main._assert_live_data` | bars boş / today_index<0 ise `RuntimeError`, gönderme (`abort_on_unreadable_data`). |
+| C — test ayrımı | `LiveDecision.synthetic` + script | Üretim notifier'ı (`allow_synthetic=False`) sentetiği reddeder; script yalnız ayrı `SLACK_TEST_WEBHOOK_URL` okur, `--i-know-this-is-synthetic` ister. |
+
+Eşikler `strategy.yaml notification:` altında. Testler +12 → **224 yeşil**.
+
 ## Sıradaki
 - ⏸ **İNSAN ONAYI:** Faz C/D kod tamam ama gerçek Slack/Sheets'e karşı canlı deneme
   YAPILMADI (kullanıcı talebi). İlk canlı koşu insan gözetiminde ELLE tetiklenmeli
